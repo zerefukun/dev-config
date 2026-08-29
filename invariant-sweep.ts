@@ -240,7 +240,7 @@ async function drain(page: Page): Promise<void> {
  * swept:
  *
  * ```ts
- * import { test } from "@gokayo43/dev-config/invariant-sweep.ts";
+ * import { test } from "@zerefukun/dev-config/invariant-sweep.ts";
  * import { expect } from "@playwright/test";
  * ```
  */

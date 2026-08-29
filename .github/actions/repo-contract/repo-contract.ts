@@ -18,7 +18,7 @@ import { checkPins, isExactVersion } from "../_lib/dependency-specs.ts";
 import { CI_WORKFLOW, type DatabaseGates } from "./ci-workflow.ts";
 import { checkLifecycle, checkLive, declaredIn, lifecycleAtBase } from "./live.ts";
 
-const DEV_CONFIG = "@gokayo43/dev-config";
+const DEV_CONFIG = "@zerefukun/dev-config";
 
 const LOCKFILES = ["package-lock.json", "pnpm-lock.yaml", "yarn.lock"];
 
@@ -27,7 +27,7 @@ const KNIP_JSON_CONFIGS = ["knip.json", "knip.jsonc", ".knip.json", ".knip.jsonc
 
 const KNIP_CONFIGS = ["knip.ts", "knip.config.ts", "knip.js", "knip.config.js", "knip.mjs"];
 
-const CHECK_CALL = /^gokayo43\/dev-config\/\.github\/workflows\/check\.yml@[0-9a-f]{40}$/;
+const CHECK_CALL = /^zerefukun\/dev-config\/\.github\/workflows\/check\.yml@[0-9a-f]{40}$/;
 
 /**
  * Facts a repo can be structurally unable to satisfy, as opposed to merely not
@@ -619,7 +619,7 @@ async function checkCall(root: string): Promise<Call> {
         {
           file: CI_WORKFLOW,
           message:
-            "no job calls gokayo43/dev-config/.github/workflows/check.yml pinned to a 40-character commit SHA — a tag is a name someone else can repoint",
+            "no job calls zerefukun/dev-config/.github/workflows/check.yml pinned to a 40-character commit SHA — a tag is a name someone else can repoint",
         },
       ],
     };

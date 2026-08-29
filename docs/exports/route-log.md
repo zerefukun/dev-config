@@ -1,6 +1,6 @@
 # The route log
 
-`@gokayo43/dev-config/route-log.ts` is the protocol between an app and the
+`@zerefukun/dev-config/route-log.ts` is the protocol between an app and the
 capacity ramp's route-coverage floor: two strings and three shapes, exported so
 that neither end of the contract reproduces them from memory.
 

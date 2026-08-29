@@ -37,7 +37,7 @@ const MANIFEST: PackageJson = {
   lifecycle: "dev",
   scripts: { "db:migrate": "bun run src/server/migrate.ts", test: "bun test" },
   devDependencies: {
-    "@gokayo43/dev-config": "github:gokayo43/dev-config#04d2938c7e1368d79169426d944107c9a0674fbc",
+    "@zerefukun/dev-config": "github:zerefukun/dev-config#04d2938c7e1368d79169426d944107c9a0674fbc",
     typescript: "7.0.2",
     "oxlint-tsgolint": "7.1.0",
   },
@@ -49,12 +49,12 @@ const BUNFIG = `[install]\nminimumReleaseAge = 604800\nexact = true\n\n[test]\nc
 
 export const CLEAN: Tree = {
   "package.json": JSON.stringify(MANIFEST),
-  "tsconfig.json": JSON.stringify({ extends: "@gokayo43/dev-config/tsconfig.base.json" }),
+  "tsconfig.json": JSON.stringify({ extends: "@zerefukun/dev-config/tsconfig.base.json" }),
   ".oxlintrc.json": JSON.stringify({
-    extends: ["./node_modules/@gokayo43/dev-config/oxlint.base.json"],
+    extends: ["./node_modules/@zerefukun/dev-config/oxlint.base.json"],
   }),
   "knip.ts":
-    'import { base } from "@gokayo43/dev-config/knip.base.ts";\nexport default { ...base };\n',
+    'import { base } from "@zerefukun/dev-config/knip.base.ts";\nexport default { ...base };\n',
   "bunfig.toml": BUNFIG,
   "lefthook.yml":
     "pre-commit:\n  commands:\n    secrets:\n      run: gitleaks git --staged --redact --no-banner .\n\npre-push:\n  commands:\n    typecheck:\n      run: bun run typecheck\n    test:\n      run: bun test\n",
@@ -63,7 +63,7 @@ export const CLEAN: Tree = {
   ".env.example": "BETTER_AUTH_SECRET=\n",
   "CONTEXT.md": "# Domain\n",
   "CLAUDE.md": "# Repo\n",
-  ".github/workflows/ci.yml": `name: CI\non:\n  pull_request:\njobs:\n  check:\n    uses: gokayo43/dev-config/.github/workflows/check.yml@${PIN} # v0.6.0\n    with:\n      database: postgres\n`,
+  ".github/workflows/ci.yml": `name: CI\non:\n  pull_request:\njobs:\n  check:\n    uses: zerefukun/dev-config/.github/workflows/check.yml@${PIN} # v0.6.0\n    with:\n      database: postgres\n`,
 };
 
 /** No pull request and no previous tip: what a workflow_dispatch or a first push tells the gate. */

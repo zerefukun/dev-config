@@ -1,6 +1,6 @@
 {
   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
-  "description": "Dependency policy shared by gokayo43's Bun projects.",
+  "description": "Dependency policy shared by zerefukun's Bun projects.",
   "extends": ["config:recommended", "helpers:pinGitHubActionDigests"],
   "schedule": ["* 0-6 * * 1"],
   "timezone": "Europe/Amsterdam",
@@ -28,7 +28,7 @@
     },
     {
       "description": "This repo's own pins carry executable gate code. Automerging one would land a gate that the adopting PR never showed anybody.",
-      "matchPackageNames": ["gokayo43/dev-config"],
+      "matchPackageNames": ["zerefukun/dev-config"],
       "automerge": false
     },
     {

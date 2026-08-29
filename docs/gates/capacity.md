@@ -168,7 +168,7 @@ never-load-tested case this exists to catch. So does an app that serves no
 ```yaml
 jobs:
   check:
-    uses: gokayo43/dev-config/.github/workflows/check.yml@<commit sha> # <release tag>
+    uses: zerefukun/dev-config/.github/workflows/check.yml@<commit sha> # <release tag>
     with:
       database: postgres
       capacity-path: |

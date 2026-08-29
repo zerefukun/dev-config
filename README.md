@@ -1,4 +1,4 @@
-# @gokayo43/dev-config
+# @zerefukun/dev-config
 
 One source of truth for the tooling policy shared by my Bun projects: TypeScript
 strictness, the oxlint rule set including its type-aware rules, the architecture
@@ -11,7 +11,7 @@ Repos install it straight from GitHub — no registry, no build step, the files 
 consumed exactly as they are committed:
 
 ```sh
-bun add -d github:gokayo43/dev-config \
+bun add -d github:zerefukun/dev-config \
   typescript oxlint oxlint-tsgolint oxfmt knip \
   eslint-plugin-boundaries eslint-import-resolver-typescript
 ```
@@ -75,7 +75,7 @@ by package name:
 
 ```json
 {
-  "extends": "@gokayo43/dev-config/tsconfig.base.json",
+  "extends": "@zerefukun/dev-config/tsconfig.base.json",
   "compilerOptions": {
     "jsx": "react-jsx",
     "lib": ["ES2023", "DOM", "DOM.Iterable"],
@@ -118,7 +118,7 @@ relative to the config file — so the base is referenced through `node_modules`
 ```json
 {
   "$schema": "https://raw.githubusercontent.com/oxc-project/oxc/main/npm/oxlint/configuration_schema.json",
-  "extends": ["./node_modules/@gokayo43/dev-config/oxlint.base.json"],
+  "extends": ["./node_modules/@zerefukun/dev-config/oxlint.base.json"],
   "env": { "browser": true, "node": true, "es2024": true },
   "ignorePatterns": ["node_modules/**", "dist/**"]
 }
@@ -581,7 +581,7 @@ use `knip.ts` rather than `knip.json`:
 
 ```ts
 import type { KnipConfig } from "knip";
-import { base } from "@gokayo43/dev-config/knip.base.ts";
+import { base } from "@zerefukun/dev-config/knip.base.ts";
 
 const config: KnipConfig = {
   ...base,
@@ -644,7 +644,7 @@ line:
 ```json
 {
   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
-  "extends": ["github>gokayo43/dev-config"]
+  "extends": ["github>zerefukun/dev-config"]
 }
 ```
 
@@ -905,7 +905,7 @@ concurrency:
 
 jobs:
   check:
-    uses: gokayo43/dev-config/.github/workflows/check.yml@<commit sha> # <release tag>
+    uses: zerefukun/dev-config/.github/workflows/check.yml@<commit sha> # <release tag>
     with:
       build: true
       database: postgres
@@ -1180,7 +1180,7 @@ jobs:
 
       - uses: treosh/lighthouse-ci-action@3e7e23fb74242897f95c0ba9cabad3d0227b9b18 # 12.6.2
         with:
-          configPath: ./node_modules/@gokayo43/dev-config/lighthouserc.json
+          configPath: ./node_modules/@zerefukun/dev-config/lighthouserc.json
           uploadArtifacts: true
 ```
 

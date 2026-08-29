@@ -51,7 +51,7 @@ describe("how a dependency spec is graded", () => {
     "file:../local",
     "link:../local",
     "catalog:default",
-    "github:gokayo43/dev-config#04d2938c7e1368d79169426d944107c9a0674fbc",
+    "github:zerefukun/dev-config#04d2938c7e1368d79169426d944107c9a0674fbc",
     "git+ssh://git@github.com/o/r.git#04d2938c7e1368d79169426d944107c9a0674fbc",
     "npm:@scope/other@1.2.3",
   ])("a spec that resolves to one thing (%s) passes", async (spec) => {
@@ -61,11 +61,11 @@ describe("how a dependency spec is graded", () => {
   // A tag can be repointed at any commit, `#main` moves by design, and
   // `#semver:` is a range wearing a fragment. Only a commit names one tree.
   test.each([
-    "github:gokayo43/dev-config",
-    "github:gokayo43/dev-config#",
-    "github:gokayo43/dev-config#main",
-    "github:gokayo43/dev-config#v0.8.3",
-    "github:gokayo43/dev-config#semver:^1.0.0",
+    "github:zerefukun/dev-config",
+    "github:zerefukun/dev-config#",
+    "github:zerefukun/dev-config#main",
+    "github:zerefukun/dev-config#v0.8.3",
+    "github:zerefukun/dev-config#semver:^1.0.0",
     "git+ssh://git@github.com/o/r.git#3f9a1c2",
   ])("a git ref that is not a commit (%s) is refused", async (spec) => {
     expect(await contract(withSpec("oxfmt", spec))).toEqual([containing("devDependencies.oxfmt")]);

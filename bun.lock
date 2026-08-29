@@ -3,7 +3,7 @@
   "configVersion": 1,
   "workspaces": {
     "": {
-      "name": "@gokayo43/dev-config",
+      "name": "@zerefukun/dev-config",
       "devDependencies": {
         "@hughescr/stryker-bun-runner": "1.3.8",
         "@oxlint/plugins": "1.78.0",

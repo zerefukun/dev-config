@@ -350,7 +350,7 @@ describe("a manifest that will not parse", () => {
   test("a reason written beside a config entry is not a parse failure", async () => {
     const commented = `{
   // The base, and the one rule this repo has a reason to differ on.
-  "extends": ["./node_modules/@gokayo43/dev-config/oxlint.base.json"],
+  "extends": ["./node_modules/@zerefukun/dev-config/oxlint.base.json"],
   "rules": {
     /* Reads a URL out of a fixture, so a bare "//" is data here. */
     "no-console": "off",
@@ -361,7 +361,7 @@ describe("a manifest that will not parse", () => {
       await contract({
         ...CLEAN,
         "tsconfig.json":
-          '{\n  // inherited\n  "extends": "@gokayo43/dev-config/tsconfig.base.json"\n}',
+          '{\n  // inherited\n  "extends": "@zerefukun/dev-config/tsconfig.base.json"\n}',
       }),
     ).toEqual([]);
   });
@@ -372,7 +372,7 @@ describe("a manifest that will not parse", () => {
   test("a comment marker inside a string is data", async () => {
     const withUrl = `{
   "$schema": "https://raw.githubusercontent.com/oxc-project/oxc/main/npm/oxlint/configuration_schema.json",
-  "extends": ["./node_modules/@gokayo43/dev-config/oxlint.base.json"]
+  "extends": ["./node_modules/@zerefukun/dev-config/oxlint.base.json"]
 }`;
     expect(await contract({ ...CLEAN, ".oxlintrc.json": withUrl })).toEqual([]);
   });
@@ -456,7 +456,7 @@ describe("a base rule the repo turns off", () => {
     return {
       ...CLEAN,
       ".oxlintrc.json": `{
-  "extends": ["./node_modules/@gokayo43/dev-config/oxlint.base.json"],
+  "extends": ["./node_modules/@zerefukun/dev-config/oxlint.base.json"],
 ${body}
 }`,
     };
@@ -772,7 +772,7 @@ describe("a second place lint config can come from", () => {
       await contract({
         ...CLEAN,
         ".oxlintrc.json": JSON.stringify({
-          extends: ["./node_modules/@gokayo43/dev-config/oxlint.base.json", "./lint-relax.json"],
+          extends: ["./node_modules/@zerefukun/dev-config/oxlint.base.json", "./lint-relax.json"],
         }),
         "lint-relax.json": JSON.stringify({ rules: { "no-console": "off" } }),
       }),

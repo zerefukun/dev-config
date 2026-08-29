@@ -160,7 +160,7 @@ before the lane ever runs. `knip.base.ts` exports the pair for the repo's own
 config to spread:
 
 ```ts
-import { base, mutationLaneDependencies } from "@gokayo43/dev-config/knip.base.ts";
+import { base, mutationLaneDependencies } from "@zerefukun/dev-config/knip.base.ts";
 
 const config: KnipConfig = {
   ...base,

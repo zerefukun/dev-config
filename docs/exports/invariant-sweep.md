@@ -1,11 +1,11 @@
 # The invariant sweep
 
-`@gokayo43/dev-config/invariant-sweep.ts` exports one thing: `test`, which is
+`@zerefukun/dev-config/invariant-sweep.ts` exports one thing: `test`, which is
 `@playwright/test`'s own `test` with the **browser context** replaced by one
 that watches every page it opens. A repo swaps its import and every spec it already has is swept:
 
 ```ts
-import { test } from "@gokayo43/dev-config/invariant-sweep.ts";
+import { test } from "@zerefukun/dev-config/invariant-sweep.ts";
 import { expect } from "@playwright/test";
 
 test("the pricing page loads", async ({ page }) => {

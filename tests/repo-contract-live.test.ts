@@ -71,7 +71,7 @@ const LIVE: Tree = {
   [RESTORE_DRILL]: "#!/usr/bin/env bash\n",
   ...unitsFor("backup"),
   ...unitsFor("restore-drill"),
-  ".github/workflows/ci.yml": `name: CI\non:\n  pull_request:\njobs:\n  check:\n    uses: gokayo43/dev-config/.github/workflows/check.yml@${PIN} # v0.6.0\n    with:\n      database: postgres\n      upgrade-gate: true\n`,
+  ".github/workflows/ci.yml": `name: CI\non:\n  pull_request:\njobs:\n  check:\n    uses: zerefukun/dev-config/.github/workflows/check.yml@${PIN} # v0.6.0\n    with:\n      database: postgres\n      upgrade-gate: true\n`,
 };
 
 /**
@@ -112,7 +112,7 @@ function liveManifest(change: (contents: PackageJson) => void = () => {}): Tree 
 /** A live repo with no database of its own: a marketing site, and half the fleet. */
 const LIVE_STATIC: Tree = {
   ...without(without(liveManifest(), BACKUP), RESTORE_DRILL),
-  ".github/workflows/ci.yml": `name: CI\non:\n  pull_request:\njobs:\n  check:\n    uses: gokayo43/dev-config/.github/workflows/check.yml@${PIN} # v0.6.0\n`,
+  ".github/workflows/ci.yml": `name: CI\non:\n  pull_request:\njobs:\n  check:\n    uses: zerefukun/dev-config/.github/workflows/check.yml@${PIN} # v0.6.0\n`,
 };
 
 // The field is the switch, so a repo that has not thrown it is graded against
@@ -444,7 +444,7 @@ describe("what going live requires", () => {
     const tree: Tree = {
       ...without(without(LIVE, BACKUP), RESTORE_DRILL),
       "package.json": none["package.json"] ?? "",
-      ".github/workflows/ci.yml": `name: CI\non:\n  pull_request:\njobs:\n  check:\n    uses: gokayo43/dev-config/.github/workflows/check.yml@${PIN} # v0.6.0\n`,
+      ".github/workflows/ci.yml": `name: CI\non:\n  pull_request:\njobs:\n  check:\n    uses: zerefukun/dev-config/.github/workflows/check.yml@${PIN} # v0.6.0\n`,
     };
     expect(await live(tree, { database: "none" })).toEqual([]);
   });
@@ -548,7 +548,7 @@ describe("a live monorepo owns its database wherever the migrations live", () =>
       name: "shop-api",
       scripts: { "db:migrate": "bun run src/db/migrate.ts" },
     }),
-    ".github/workflows/ci.yml": `name: CI\non:\n  pull_request:\njobs:\n  check:\n    uses: gokayo43/dev-config/.github/workflows/check.yml@${PIN} # v0.6.0\n`,
+    ".github/workflows/ci.yml": `name: CI\non:\n  pull_request:\njobs:\n  check:\n    uses: zerefukun/dev-config/.github/workflows/check.yml@${PIN} # v0.6.0\n`,
   };
 
   test("so every rule holds, with the root carrying no script at all", async () => {
