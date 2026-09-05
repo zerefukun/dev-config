@@ -24,7 +24,7 @@ exact = true
 # docs/gates/test-suite.md.
 coverageThreshold = { lines = 0.75, functions = 0.75 }
 coverageSkipTestFiles = true
-# Two things here execute only inside a spawned process, so the runner
+# Three things here execute only inside a spawned process, so the runner
 # instruments them and then watches them run nowhere: the file reads as
 # unreached and drags itself under the per-file floor.
 #
@@ -37,4 +37,14 @@ coverageSkipTestFiles = true
 # that `tests/limiter-conformance.test.ts` spawns. What grades it is that same
 # suite: the house build has to pass the conformance suite and every flaw has to
 # fail the case paired with it.
-coveragePathIgnorePatterns = ["anti-slop/**", "tests/house-limiter.ts"]
+#
+# `dev-server.ts` — a bin, and only the bin: what it is about is a detached
+# child, a claimed port, a lock and a signal reaching a process group, none of
+# which survive being called in-process, so the suite spawns the real binary and
+# the runner watches this file run nowhere. `tests/dev-server.test.ts` carries
+# its duty, naming the wrong implementation each case kills.
+#
+# `dev-server-derive.ts` is deliberately NOT here: everything that can be
+# answered without a machine was split into it for exactly that reason, and it is
+# graded by the floor like anything else.
+coveragePathIgnorePatterns = ["anti-slop/**", "tests/house-limiter.ts", "dev-server.ts"]

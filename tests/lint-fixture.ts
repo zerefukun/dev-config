@@ -16,6 +16,12 @@ export interface Diagnostic {
   readonly severity: string;
   readonly code: string;
   readonly message: string;
+  /**
+   * The rule's advice, which for a configured rule is the message the config
+   * wrote. `no-restricted-imports` states the house pick there rather than in
+   * `message`, so a suite grading what a diagnostic tells a reader reads this.
+   */
+  readonly help: string;
   readonly line: number;
   readonly column: number;
 }
@@ -43,6 +49,7 @@ function decoded(held: ConfigObject): Diagnostic {
     severity: textAt(held, "severity"),
     code: textAt(held, "code"),
     message: textAt(held, "message"),
+    help: textAt(held, "help"),
     line: countAt(span, "line"),
     column: countAt(span, "column"),
   };
@@ -147,6 +154,22 @@ export async function lintAt(
   );
 }
 
+/**
+ * A report grouped by the file each diagnostic belongs to, which is what puts
+ * one back with the case that drew it — a file in a flat tree of cases, or a
+ * path a rule is scoped by. oxlint answers paths relative to the root it ran in,
+ * so the name a caller looks up is the one it wrote into the tree.
+ */
+export function byFile(
+  diagnostics: readonly Diagnostic[],
+): ReadonlyMap<string, readonly Diagnostic[]> {
+  const grouped = new Map<string, Diagnostic[]>();
+  for (const diagnostic of diagnostics) {
+    grouped.set(diagnostic.filename, [...(grouped.get(diagnostic.filename) ?? []), diagnostic]);
+  }
+  return grouped;
+}
+
 /** Every diagnostic written out, for a caller grading a whole tree at once. */
 export async function lines(tree: Tree): Promise<string[]> {
   return (await oxlint(tree)).map(stated);
@@ -199,12 +222,8 @@ export async function reportsFor(
       ".oxlintrc.json": alone(rule),
       ...Object.fromEntries(files.map((file, index) => [file, sources[index] ?? ""])),
     });
-    const byFile = new Map<string, string[]>();
-    for (const diagnostic of diagnostics) {
-      const name = diagnostic.filename.slice(diagnostic.filename.lastIndexOf("/") + 1);
-      byFile.set(name, [...(byFile.get(name) ?? []), stated(diagnostic)]);
-    }
-    return files.map((file) => byFile.get(file) ?? []);
+    const grouped = byFile(diagnostics);
+    return files.map((file) => (grouped.get(file) ?? []).map(stated));
   })();
   runs.set(key, { sources, reported });
   return await reported;
@@ -247,12 +266,36 @@ function violating(list: readonly Case[]): string {
 }
 
 /**
+ * The config a fixture inherits the shipped base through. Type-aware checking is
+ * off because a fixture tree has no tsconfig for the checker to read; a case
+ * needing more than that — the globals a repo declares, say — adds it.
+ *
+ * One definition, because every scoping case in this suite is graded against
+ * the base as shipped, and a second copy of this object is a second answer to
+ * "what does a repo inherit" that nothing would notice had drifted.
+ */
+export function baseConfig(extra: ConfigObject = {}): string {
+  return JSON.stringify({ extends: [BASE], options: { typeAware: false }, ...extra });
+}
+
+/**
+ * A tree of source files linted by the shipped base, grouped by path: the whole
+ * of what a suite grading WHERE a rule applies needs, as against `cases` above,
+ * which grades what one rule says about a source.
+ */
+export async function gradedByBase(
+  files: Record<string, string>,
+): Promise<ReadonlyMap<string, readonly Diagnostic[]>> {
+  return byFile(await oxlint({ ".oxlintrc.json": baseConfig(), ...files }));
+}
+
+/**
  * Every rule's violating case, in a file named the way the base decides what it
  * grades — which is the whole of what a scoped rule's suite is asking about.
  */
 export function underBase(suffix: string, rules: Record<string, readonly Case[]>): Tree {
   return {
-    ".oxlintrc.json": JSON.stringify({ extends: [BASE], options: { typeAware: false } }),
+    ".oxlintrc.json": baseConfig(),
     ...Object.fromEntries(
       Object.entries(rules).map(([rule, list]) => [`${rule}${suffix}`, violating(list)]),
     ),

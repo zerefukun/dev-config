@@ -1,3 +1,4 @@
+// oxlint-disable-next-line eslint/no-restricted-imports -- scratch databases dropped after each case, not setup it hides — an afterAll would keep one alive per case on a server two runs share; the await using migration is dev-config#85
 import { afterEach, describe, expect, test } from "bun:test";
 import { chmod, rm } from "node:fs/promises";
 import { join } from "node:path";
@@ -9,6 +10,7 @@ import { beside, rows } from "../.github/actions/db-gate/database.ts";
 import { replayGate, upgradeDatabase } from "../.github/actions/db-gate/replay.ts";
 
 import { containing } from "./matchers.ts";
+import { SERVER } from "./postgres.ts";
 import { lineage, type Migration, migratesFrom, scripted } from "./lineage.ts";
 import { git, history, IDENTITY, type Repo, under } from "./tree.ts";
 
@@ -30,8 +32,6 @@ import { git, history, IDENTITY, type Repo, under } from "./tree.ts";
  * suite against the same Postgres, which is what two worktrees under review
  * produce, shares nothing with the first.
  */
-const SERVER =
-  Bun.env["TEST_DATABASE_URL"] ?? "postgres://postgres:postgres@localhost:5432/postgres";
 
 const JOURNALLED = new URL("./journalled-migrator.ts", import.meta.url).pathname;
 const REPLAYING = new URL("./replaying-migrator.ts", import.meta.url).pathname;

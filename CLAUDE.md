@@ -16,7 +16,8 @@ a change to a rule usually lands here too.
 - `*.base.json` / `knip.base.ts` / `lighthouserc.json` — the bases repos inherit.
   Anything keyed to a repo's own paths does not belong in one.
 - `anti-slop/` — the oxlint JS plugin `oxlint.base.json` names in `jsPlugins`,
-  ported from dmmulroy/anti-slop (README has the rule table and the credit).
+  ported from dmmulroy/anti-slop, plus the house rules that carry a pick a file's
+  position decides (README has the rule tables and the credit).
   `shared/` holds the three questions more than one rule asks: `syntax.js` what
   was written, `bindings.js` what a name stands for and whether it can change,
   and `types.js` what a type finally means — `resolveType` is the one walk
@@ -69,8 +70,10 @@ a change to a rule usually lands here too.
   plugin from the working directory, and declaring the two packages in the
   repo's manifest is what puts them under its lockfile, its exact pins and its
   release-age window.
-- The `*.ts` at the root are the package's **exports** — what a consuming repo
-  imports and calls, as against the gates, which run over it from CI. Each is in
+- The `*.ts` at the root are what a consuming repo reaches directly, as against
+  the gates, which run over it from CI. Five of them are **exports** it imports
+  and calls; the two `dev-server*` files below are a bin it runs and the module
+  that bin imports. Each is in
   `files` and `exports`, and each is here rather than in an action for the same
   reason: what it grades is only visible from inside the repo. `route-log.ts` is
   the protocol between an app and the route-coverage floor;
@@ -84,27 +87,53 @@ a change to a rule usually lands here too.
   is by subject rather than by taste: a route table is a value one call can
   grade, and a limiter is a sequence of attempts against a live Redis that only
   a test framework can sequence.
+- `dev-server.ts` and `dev-server-derive.ts` — one supervised dev server per git
+  worktree, on a port the worktree derives, reached as `bun run dev-server <cmd>`
+  through the `bin` entry. Neither is an export: there is nothing in either for a
+  repo to import, so `files` ships them, `bin` names the first, and `exports`
+  names neither. The split is by what needs a machine — the bin is the detached
+  child, the claimed port, the lock and the signals; the derivation is what a
+  worktree's server is called, which port it gets, and what its record has to be,
+  and is the half a test can drive with no repository at all. That is also why
+  only the bin is waived from the coverage floor in `bunfig.toml`.
+  Its reference page is README's "One dev server per worktree" rather than a
+  `docs/exports/` one, and `tests/dev-server.test.ts` drives it against real
+  worktrees and real detached processes — the one suite here that spends real
+  time, because a signal reaching a process group is not a thing any injected
+  clock has a part in.
 - `db-gate/capacity.js` is the exception: it runs inside k6, not under this
   repo's compiler or linter, which is why `.oxlintrc.json` ignores it. A JSON
   config cannot carry the reason, so it is here.
 - `tests/` — a fixture suite per gate, driving it against a violating tree and a
-  clean one. A gate without one is a claim; `anti-slop.test.ts` and
-  `anti-slop-test-smells.test.ts` hold every lint rule in `anti-slop/` to the
-  same bar — a block of cases per rule, split where the base splits, since the
-  rules scoped to test files have a second question to answer about every case
-  and the ones that apply everywhere do not. Neither file states how many there
-  are: `anti-slop.test.ts` asks the plugin and the base for their rule names and
-  requires the two sets to be equal, which is the check a count would replace
-  with a number to forget. Both run through `lint-fixture.ts`,
+  clean one. A gate without one is a claim; `anti-slop.test.ts`,
+  `anti-slop-test-smells.test.ts`, `anti-slop-env.test.ts` and
+  `lint-policy.test.ts` hold every lint rule in `anti-slop/` to the same bar — a
+  block of cases per rule, split where the base splits, since the rules scoped to
+  test files have a second question to answer about every case, the one scoped
+  away from `env.ts` and from a suite has a third, the two a directory grants or
+  scopes have a fourth, and the ones that apply everywhere have none. None of
+  them states how many there are: `anti-slop.test.ts` asks the plugin and the
+  base for their rule names and requires the two sets to be equal, which is the
+  check a count would replace with a number to forget. All of them run through
+  `lint-fixture.ts`,
   which owns the case shape and lints a whole block in one oxlint spawn, and
   refuses a run whose plugin threw or whose exit status and diagnostics
   disagree, both of which otherwise read as a clean tree.
   `anti-slop-upstream.test.ts` is
   upstream's own fixtures, as a differential oracle over every rule it ships
-  tests for. Two suites are not a gate's: `oxlint-base.test.ts` holds what
+  tests for. Three suites are not a gate's: `oxlint-base.test.ts` holds what
   the base config itself must — an override REPLACES a list-shaped rule rather
   than adding to it, which it proves against a config it builds itself and then
-  holds every override in the base to — and `action-evidence.test.ts` holds every action
+  holds every override in the base to, and that a consuming repo's own list
+  survives it — `lint-policy.test.ts` holds the picks a file's position decides,
+  on both sides of every glob that scopes one, on every spelling that reaches a
+  banned name without importing it, and on the message each names its pick in;
+  `lint-policy-react.test.ts` is the React Compiler's half of that policy, split
+  off because it is its own subject and the largest one — one table keyed by
+  every `react/*` rule the base states, each entry a fixture that must draw its
+  own key, a named reason nothing here provokes it, or a note that the rule is
+  not the compiler's, and three comparisons holding that table, the base and the
+  README's own table to one set. And `action-evidence.test.ts` holds every action
   publishing an artifact to keeping the runner-temp paths its own YAML names.
   `repo-contract-fixture.ts` is the clean tree the repo contract's three suites
   share — split the way the gate is: the facts every repo satisfies, the
@@ -149,9 +178,14 @@ Neither is coverage-floored: `bunfig.toml` declares the threshold and CI's
 `anti-slop/**` sits outside that floor, in `bunfig.toml`: its rules run inside a
 spawned oxlint and never execute in the test process, so the runner instruments
 them and then watches them run nowhere. What carries their duty instead is
-`tests/anti-slop*.test.ts`, which lints fixture trees with the shipped binary —
-a block of cases per rule, and a check that the base enables exactly the rules
-the plugin defines.
+`tests/anti-slop*.test.ts` and `tests/lint-policy.test.ts`, which lint fixture
+trees with the shipped binary — a block of cases per rule, and a check that the
+base enables exactly the rules the plugin defines.
+
+`tests/house-limiter.ts` and `dev-server.ts` are out for the same reason and
+carry their duty the same way — a suite that spawns the real thing. `bunfig.toml`
+names which suite, per file, and says why `dev-server-derive.ts` is not with
+them.
 
 `bun test` needs a Postgres, a Redis, a chromium and passwordless sudo. The
 first because the replay gate's property is what two databases end up holding
@@ -159,12 +193,13 @@ and the semantic fixtures' is what a real migration does to a real row; the
 second because a limiter's bucket is shared by two processes and its Redis can
 be gone; the third because what the invariant sweep claims is what a browser
 reports; the fourth because the test-suite gate seals a run in a network
-namespace and nothing short of taking one says whether it holds. The suite looks
-at `TEST_DATABASE_URL` or localhost:5432 and creates and drops databases there.
-`TEST_REDIS_URL` has no default and is refused when unset: the conformance suite
-**flushes** what it is given, and a suite that guessed at localhost:6379 on this
-box would wipe whichever stack's Redis was on it. README's "Gating this repo"
-has the one-liners, including the browser install.
+namespace and nothing short of taking one says whether it holds. Neither
+`TEST_DATABASE_URL` nor `TEST_REDIS_URL` has a default, and each is refused when
+unset: the database suites create and **drop** databases on the server they are
+given and the conformance suite **flushes** its Redis, and `localhost` on this
+box is a host address one of the stacks or a runner's service container may be
+publishing. `tests/postgres.ts` is the one reader of the first.
+README's "Gating this repo" has the one-liners, including the browser install.
 
 Two runs may share one server, which is what two worktrees under review are.
 Every database either end makes is named for what tells the runs apart: the

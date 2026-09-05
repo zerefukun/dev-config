@@ -4,6 +4,12 @@
   "categories": {
     "correctness": "error",
     "suspicious": "error",
+    // The one tier that stays advisory, against the rule that a warn is a count
+    // nobody drives to zero. A perf hint is a claim about shared state and
+    // input size the rule cannot see — `no-await-in-loop` below is off outright
+    // for exactly that, and it is the tier's general case rather than its
+    // exception. At `error` the rest would be answered by disables carrying a
+    // measurement nobody took, which is worse than a hint nobody read.
     "perf": "warn"
   },
   "options": {
@@ -28,7 +34,7 @@
     // `perf` stays on: `unicorn/prefer-array-find` is about the code, not about
     // the concurrency model.
     "no-await-in-loop": "off",
-    "no-console": "warn",
+    "no-console": "error",
     "no-empty": "error",
     "eslint/no-warning-comments": [
       "error",
@@ -36,6 +42,22 @@
     ],
     "typescript/no-explicit-any": "error",
     "typescript/no-non-null-assertion": "error",
+    // `never` is the only setting that refuses assertions rather than choosing a
+    // syntax for them. An assertion tells the compiler to stop checking at the
+    // one place the answer was still available: an annotation makes the same
+    // claim and is checked, and `satisfies` makes it without widening. `as
+    // const` is not an assertion in this sense and stays legal — it narrows a
+    // literal rather than overriding an inference — which is why the option is
+    // `assertionStyle` alone and not the literal-shaped ones beside it.
+    "typescript/consistent-type-assertions": ["error", { "assertionStyle": "never" }],
+    // The rule above refuses every assertion; this one refuses the subset of
+    // them that widens or narrows unsafely, and arrives through `suspicious`.
+    // Two rules over one line means every escape hatch in a source file names
+    // both, and a reader of one disable cannot tell which fact it is about. So
+    // the weaker of the two is stated only where the stronger is off — the
+    // suite override below, where a case asserts about a value nothing typed
+    // and this rule is the whole of what still holds there.
+    "typescript/no-unsafe-type-assertion": "off",
     "typescript/no-restricted-types": [
       "error",
       {
@@ -55,6 +77,43 @@
       { "name": "__filename", "message": "Not defined in ESM — use import.meta.url/path." },
       { "name": "require", "message": "ESM project — use import (import() for dynamic)." }
     ],
+    // The imports a house pick has already answered, in the two cases that hold
+    // in every file. Each entry names what the import lost to, because the
+    // diagnostic is the only place the loser of that decision is standing.
+    //
+    // Only a ban with no exception can live here: an override
+    // REPLACES the whole list for the files it matches — a consuming repo's own
+    // entries included — so a ban a file's position decides is a plugin rule
+    // instead, whose scalar setting replaces only itself. `no-unnamed-effects`
+    // and `no-raw-query-hooks` below are the two that needed it.
+    //
+    // Memoisation is the React Compiler's, which every repo here builds with
+    // (STACK): it inserts the memo a hand-written one approximates, and reads
+    // the dependencies off the code rather than off a list that can disagree
+    // with it. Each name gets its own entry so each carries its own message.
+    //
+    // `bun:test`'s per-case hooks are the setup nothing in the case names (the
+    // testing rules' per-case-setup line): a reader has to hold a hook written
+    // elsewhere in the file to know what the case starts from, and the mutation
+    // lane cannot tell which case a shared fixture belongs to. `beforeAll` and
+    // `afterAll` stay: an expensive resource no case mutates is what they are
+    // for.
+    //
+    // Both entries refuse a type-only import of the name as well, which this
+    // rule gives no way to allow. Neither name has a use as a type.
+    "no-restricted-imports": [
+      "error",
+      {
+        "name": "react",
+        "importNames": ["useMemo", "useCallback"],
+        "message": "React Compiler owns memoisation — delete the wrapper and use the value directly."
+      },
+      {
+        "name": "bun:test",
+        "importNames": ["beforeEach", "afterEach"],
+        "message": "Set a case up with a call it makes itself, and tear it down with `await using` — beforeAll/afterAll stay for shared immutable resources."
+      }
+    ],
     "unicorn/prefer-node-protocol": "error",
     "typescript/ban-ts-comment": [
       "error",
@@ -62,8 +121,15 @@
     ],
     "unicorn/no-abusive-eslint-disable": "error",
     "max-lines": ["error", { "max": 1000 }],
-    "max-depth": ["warn", { "max": 4 }],
-    "complexity": ["warn", { "max": 20 }],
+    "max-depth": ["error", { "max": 4 }],
+    // `modified` counts a whole `switch` as one decision rather than one per
+    // `case`, which is the difference between measuring the branching a reader
+    // has to hold and measuring the size of a union. An exhaustive switch over a
+    // discriminated union is the house shape for a total mapping —
+    // `switch-exhaustiveness-check` below is what makes it total — and under the
+    // classic count a union of two dozen members is over this limit by being
+    // answered at all.
+    "complexity": ["error", { "max": 20, "variant": "modified" }],
     "import/no-cycle": "error",
     // The automatic JSX runtime compiles JSX with no React binding in scope, so
     // there is nothing here for the rule to ask to be imported. A repo on the
@@ -71,7 +137,59 @@
     // it back on for itself.
     "react/react-in-jsx-scope": "off",
     "react/rules-of-hooks": "error",
-    "react/exhaustive-deps": "warn",
+    "react/exhaustive-deps": "error",
+    // The React Compiler's judgements, one rule per judgement. None of them
+    // takes options, so the severity is the whole of what there is to say here.
+    //
+    // Stated in full rather than left to the tiers, because they do not all
+    // arrive through one: twelve are `correctness` and four `suspicious`, which
+    // this base already denies, but five are `restriction`, which it does not
+    // take at all — and `no-deriving-state-in-effects` is `perf`, the one tier
+    // deliberately left advisory above. That last is the single exception to
+    // the argument written there, and it is an exception because the hint is
+    // not a guess about input size: deriving state in an effect costs a render
+    // every time, which is a fact about the code and not about the load.
+    // Naming all twenty-two also means a rule upstream recategorises stays at
+    // `error` here rather than quietly following its tier.
+    //
+    // `react/todo` is the misleading name and the load-bearing one: it is the
+    // bail-out report — the compiler saying it declined to compile a component
+    // at all, so every memo it would have inserted is simply absent. A bail-out
+    // is not a violation, so with this one off, exactly the components nothing
+    // optimized are the ones that draw nothing. It has no relation to
+    // `no-warning-comments` above, which is what reads the word `todo` in a
+    // comment.
+    //
+    // Which judgement means what, how to answer the two the fleet actually
+    // hits, and the one suppression nothing here catches: README, "What the
+    // React Compiler declines to optimize".
+    "react/capitalized-calls": "error",
+    "react/error-boundaries": "error",
+    "react/exhaustive-effect-dependencies": "error",
+    "react/globals": "error",
+    "react/hooks": "error",
+    "react/immutability": "error",
+    "react/incompatible-library": "error",
+    "react/invariant": "error",
+    "react/memo-dependencies": "error",
+    "react/no-deriving-state-in-effects": "error",
+    "react/preserve-manual-memoization": "error",
+    "react/purity": "error",
+    "react/refs": "error",
+    "react/rule-suppression": "error",
+    "react/set-state-in-effect": "error",
+    "react/set-state-in-render": "error",
+    "react/static-components": "error",
+    "react/syntax": "error",
+    "react/todo": "error",
+    "react/unsupported-syntax": "error",
+    "react/use-memo": "error",
+    "react/void-use-memo": "error",
+    // `pedantic`, which this base does not take. `null` is the exception the
+    // option carves out: `x == null` is the one loose comparison that states an
+    // intent the strict operator cannot — either of the two nullish values at
+    // once — and `x === null || x === undefined` is longer and says less.
+    "eqeqeq": ["error", "always", { "null": "ignore" }],
     // Its fix is to mutate the accumulator in place rather than spread into it.
     // That is right for a measured hot loop and wrong as a default for the
     // copy-on-write style these codebases are written in, where a fresh object
@@ -89,8 +207,9 @@
     "typescript/no-unsafe-enum-comparison": "error",
     "typescript/no-unsafe-member-access": "error",
     "typescript/no-unsafe-return": "error",
-    "typescript/prefer-nullish-coalescing": "warn",
+    "typescript/prefer-nullish-coalescing": "error",
     "anti-slop/no-chained-type-assertions": "error",
+    "anti-slop/no-env-access": "error",
     "anti-slop/no-known-value-widening": "error",
     "anti-slop/no-object-parameters": "error",
     "anti-slop/no-reflect-apply": "error",
@@ -98,6 +217,11 @@
     "anti-slop/no-unknown-parameters": "error",
     "anti-slop/no-unknown-returns": "error",
     "anti-slop/no-unknown-type-aliases": "error",
+    // Everywhere, and off in the one directory that answers the question it
+    // asks — see the `**/hooks/**` block below. `no-raw-query-hooks` is the
+    // same pick the other way round: it says nothing until a file is a route's,
+    // so it is stated in that block alone.
+    "anti-slop/no-unnamed-effects": "error",
     "anti-slop/no-unsafe-dictionary-type": "error"
   },
   "overrides": [
@@ -123,6 +247,80 @@
       "files": ["src/server/**", "server/**", "apps/api/**"],
       "rules": {
         "no-console": "error"
+      }
+    },
+    {
+      "files": ["**/env.ts"],
+      "rules": {
+        // The one module that reads the environment, which is what makes the
+        // rule above sayable everywhere else. Deliberately this one name and no
+        // variant of it: a second env module is a second place the answer comes
+        // from, so a repo that needs one writes the switch-off itself and the
+        // reason for it, rather than inheriting a glob that already forgave it.
+        "anti-slop/no-env-access": "off"
+      }
+    },
+    {
+      "files": [
+        "**/*.test.ts",
+        "**/*.test.tsx",
+        "**/*.spec.ts",
+        "**/*.spec.tsx",
+        "**/tests/**",
+        "**/e2e/**"
+      ],
+      "rules": {
+        // A suite is where a variable is SET, not where one is read for its
+        // value: a case spawns the thing under test with an environment it
+        // wrote, and reads the runner's own to find a binary, a temp directory
+        // or the throwaway database it was pointed at. None of that is a repo's
+        // configuration and there is no `env.ts` for it to come from. The
+        // directories go with the suffixes because a suite's helpers — the
+        // fixture that spawns, the migrator it runs, the harness that lints —
+        // are that same code one file over, and are the half a suffix list
+        // silently leaves failing.
+        "anti-slop/no-env-access": "off",
+
+        // A case asserts about values the compiler has no way to know the shape
+        // of — a decoded report, a captured payload, a row read back out of a
+        // database — and the assertion is the claim the case is there to make.
+        // The same directories as above, for the same reason: the fixture that
+        // decodes is the suite's code one file over.
+        "typescript/consistent-type-assertions": "off",
+
+        // And the subset of it left standing where that is off: an assertion a
+        // case makes about a value it decoded is the claim, but one that widens
+        // or narrows unsafely is still a hole, and this is the only scope where
+        // saying so does not repeat the rule above.
+        "typescript/no-unsafe-type-assertion": "error"
+      }
+    },
+    // The two picks a file's position decides. Both are plugin rules rather
+    // than `no-restricted-imports` entries, because a scalar setting in an
+    // override replaces only itself: a list-shaped rule redefined here would
+    // take away every entry it did not restate, a consuming repo's own settled
+    // decisions included.
+    {
+      "files": ["**/routes/**"],
+      "rules": {
+        // A route's data is the loader's — `ensureQueryData` there,
+        // `useSuspenseQuery` in the component (STACK's Route data line) — so
+        // this rule says nothing at all until a file is a route's, and this
+        // block is where it starts.
+        "anti-slop/no-raw-query-hooks": "error"
+      }
+    },
+    {
+      "files": ["**/hooks/**"],
+      "rules": {
+        // The directory that answers the question the rule asks. A hook is the
+        // module an effect is allowed to live in, because the hook's name is
+        // what states the subscription — and this block is last so that a hook
+        // colocated under `routes/` is graded as a hook, which is also why the
+        // rule below is off again here: data fetched on interaction is what raw
+        // `useQuery` is for, and a hook is where that fetch belongs.
+        "anti-slop/no-unnamed-effects": "off",
+        "anti-slop/no-raw-query-hooks": "off"
       }
     }
   ]

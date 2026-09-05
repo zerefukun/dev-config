@@ -2,7 +2,7 @@
   "$schema": "https://raw.githubusercontent.com/oxc-project/oxc/main/npm/oxlint/configuration_schema.json",
   "extends": ["./oxlint.base.json"],
   "env": { "node": true, "es2024": true },
-  "ignorePatterns": ["node_modules/**", ".github/actions/db-gate/capacity.js"],
+  "ignorePatterns": ["node_modules/**", ".claude/**", ".github/actions/db-gate/capacity.js"],
   "rules": {
     // One of the base's own rules, off here and nowhere else. Every gate in
     // this repo reads a file it does not own — another repo's package.json,
@@ -12,5 +12,32 @@
     // repo's decoder: the rule exists to push parsing to the boundary, and in
     // this repo the boundary is the product.
     "anti-slop/no-unknown-parameters": "off"
-  }
+  },
+  "overrides": [
+    {
+      "files": [
+        "dev-server.ts",
+        ".github/actions/_lib/gate.ts",
+        ".github/actions/db-gate/database.ts",
+        ".github/actions/db-gate/probe.ts",
+        ".github/actions/mutation-lane/mutation-lane.ts"
+      ],
+      "rules": {
+        // `dev-server.ts` is a CLI rather than a module this repo configures:
+        // it reads one variable for its value — the readiness timeout its own
+        // suite shortens — and hands the environment it was started with to the
+        // dev server it spawns. There is no `env.ts` above a bin for either to
+        // come from.
+        //
+        // `gate.ts` is this repo's `env.ts` under another name, and the only
+        // other file here that reads a variable for its value: `inputs()` and
+        // `required()` are the choke point the rule asks for, and both throw
+        // rather than default. The other three forward the environment they
+        // were started with to a child process — `{ ...process.env, DATABASE_URL }`
+        // — which reads no variable and has none to validate. Named one file at
+        // a time so a fifth reader fails rather than joining a glob.
+        "anti-slop/no-env-access": "off"
+      }
+    }
+  ]
 }

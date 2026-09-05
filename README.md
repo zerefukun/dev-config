@@ -128,10 +128,11 @@ Configs merge first-to-last, so anything the local file declares wins over the
 base.
 
 The base sets `correctness: error`, `suspicious: error`, `perf: warn`,
-`no-console: warn`, and the hooks rules — which oxlint configures under the
-`react` plugin as `react/rules-of-hooks` and `react/exhaustive-deps`. Their
-diagnostics are labelled `react-hooks`, but there is no `react-hooks` plugin to
-name in a config, and a config naming one silently lints nothing.
+`no-console: error`, and the hooks rules — which oxlint configures under the
+`react` plugin as `react/rules-of-hooks` and `react/exhaustive-deps`, both at
+`error`. Their diagnostics are labelled `react-hooks`, but there is no
+`react-hooks` plugin to name in a config, and a config naming one silently lints
+nothing.
 
 `suspicious` denies rather than warns because every repo here is template-born
 and greenfield: there is no inherited violation count for a warn tier to report
@@ -147,20 +148,35 @@ to `error`, and a rule at `warn` is a hint whose count nobody is required to
 drive to zero. Moving something from `warn` to `error` is the whole of the
 decision — there is no middle setting that stops a merge.
 
+Which is why almost nothing is left at `warn`. `no-console` and
+`typescript/prefer-nullish-coalescing` were both advisory and are now denied: a
+stray `console.log` and a `||` that should have been `??` are each a decision, not
+a taste. The `perf` **category** is the one deliberate exception, and it stays
+advisory for a reason that does not generalise — a perf rule's advice is a claim
+about shared state and input size the rule cannot see, so at `error` it would be
+answered by disables carrying a measurement nobody took. `no-await-in-loop` is
+that tier's general case, off outright a few lines below rather than warned. The
+exception is graded by severity in `tests/lint-policy.test.ts`, so promoting the
+tier is a decision someone has to take deliberately rather than tidily.
+
 A config's own `plugins` array replaces oxlint's built-in defaults rather than
 adding to them, which is why the base names every plugin it wants including the
 defaults `oxc`, `unicorn` and `typescript`. Across `extends` the arrays are
 unioned, so a repo that adds `plugins` of its own keeps the base's.
 
-Four rules the base switches off: `no-await-in-loop` (a sequential loop is
+The rules the base switches off: `no-await-in-loop` (a sequential loop is
 usually the correct one here, and the fan-out it asks for is a design call about
 shared state the rule cannot see), `react/react-in-jsx-scope` (the automatic JSX
 runtime imports nothing), `oxc/no-map-spread` (its advice is to mutate in place,
 wrong for the copy-on-write style these codebases are written in), and
-`unicorn/consistent-function-scoping`, in the test-file override alone (a helper
-one describe uses belongs inside it). The reason in full sits beside each entry,
-which is where the repo contract requires it — see
-[the repo contract](docs/gates/repo-contract.md).
+`typescript/no-unsafe-type-assertion` (a subset of the rule below it, which is
+why it is stated only where that one is off). Then, in an override:
+`unicorn/consistent-function-scoping` and
+`typescript/consistent-type-assertions` in a suite, and
+`anti-slop/no-unnamed-effects` under `hooks/`. The reason in full sits beside
+each entry, which is where the repo contract requires it — see
+[the repo contract](docs/gates/repo-contract.md). No count is given here on
+purpose: a number in prose is one nobody updates, and the list is the answer.
 
 ### The escape hatches, and their price
 
@@ -199,13 +215,186 @@ unknown>` in `_lib/gate.ts` here, for config files this repo reads and does
   does. Inline `{ [k: string]: unknown }` is not matched — the rule reads type
   references, not shapes — but `anti-slop/no-unsafe-dictionary-type` below is,
   and catches it along with aliases and mapped types.
+- `typescript/consistent-type-assertions`, at `assertionStyle: "never"` — an
+  assertion tells the compiler to stop checking at the one place the answer was
+  still available. An annotation makes the same claim and is checked, and
+  `satisfies` makes it without widening. `as const` is not an assertion in this
+  sense and stays legal, whatever the literal-shaped options beside it say: it
+  narrows a literal rather than overriding an inference. A suite is where the
+  rule is off — see the overrides below, and with it goes the only reason
+  `typescript/no-unsafe-type-assertion` is stated at all: that rule refuses the
+  subset of assertions that widen or narrow unsafely, so wherever the stronger
+  one is on it is a second name on every disable and a reader of one cannot tell
+  which fact it is about. It is therefore off at the top level and `error` in the
+  suite override, where it is the whole of what still holds.
 - `no-restricted-globals` — `__dirname`, `__filename` and `require`. Every repo
   here is ESM, where none of the three exists; the entries name the replacement
   (`import.meta.dir`, `import.meta.url`, `import`) so the diagnostic is the fix.
+- `eqeqeq`, at `always` with `{ "null": "ignore" }` — `==` coerces instead of
+  deciding, and the coercion table is the thing nobody has in their head. It sits
+  in `pedantic`, which this base does not take, so it is stated. `null` is the
+  one exception, and it is not a softening: `x == null` asks about both nullish
+  values at once, which is a question `===` cannot put in one comparison and
+  `x === null || x === undefined` answers at twice the length.
+- `preserve-caught-error` — a `catch` that throws something new without passing
+  the original as `cause` deletes the only record of what actually failed. It
+  arrives through `suspicious`, and the base does not restate it: a rule the tier
+  already denies is one the base agrees with, and restating those is a list with
+  no end. `tests/lint-policy.test.ts` grades that the ban is live, through the
+  tier that carries it.
+
+### What the React Compiler declines to optimize
+
+Every repo here builds with the React Compiler, which is why the memo pair below
+is banned outright. The compiler earns that ban by optimizing what it can prove
+pure — and it skips what it cannot, silently, per component. So the mandate was
+the one stack pick nothing in the gate could see: a component that rolled a die
+during render passed clean.
+
+The compiler's judgements are what end that, and the base states every one of
+them at `error`. oxlint ports the **compiler** rather than
+`eslint-plugin-react-hooks`, so the port's rule set is its own: the names below
+are the whole of what it offers, and upstream's `component-hook-factories`,
+`config` and `gating` are not among them. A judgement is its own rule name, so a
+name the port drops is refused at config-parse time rather than ignored:
+
+| Rule                             | The code it refuses                                              |
+| -------------------------------- | ---------------------------------------------------------------- |
+| `purity`                         | `Math.random()`, `Date.now()` and friends called during render   |
+| `immutability`                   | writing through props, or through a value a hook returned        |
+| `set-state-in-render`            | a setter called in the render body                               |
+| `set-state-in-effect`            | a setter called synchronously in an effect body                  |
+| `no-deriving-state-in-effects`   | an effect whose whole job is to compute state from another value |
+| `exhaustive-effect-dependencies` | an effect dependency list that omits what the body reads         |
+| `refs`                           | reading or writing `.current` during render                      |
+| `globals`                        | reassigning a binding declared outside the component or hook     |
+| `static-components`              | a component declared inside another one's render                 |
+| `error-boundaries`               | JSX constructed inside a `try`, where its errors never land      |
+| `use-memo`                       | a dependency list that is not an array of simple expressions     |
+| `memo-dependencies`              | a memo dependency list that omits what the callback reads        |
+| `void-use-memo`                  | a `useMemo` callback that returns nothing                        |
+| `preserve-manual-memoization`    | a hand-written memo whose deps the compiler infers differently   |
+| `hooks`                          | a hook called conditionally, so the call order can change        |
+| `capitalized-calls`              | a capitalized function called directly instead of rendered       |
+| `incompatible-library`           | an API returning functions that cannot be memoized safely        |
+| `unsupported-syntax`             | `eval` and `with`, which nothing can analyse statically          |
+| `rule-suppression`               | a comment silencing a `react-hooks/*` rule — see below           |
+| `syntax`                         | code the compiler could not read at all                          |
+| `invariant`                      | an upstream assertion — see below; not a judgement about you     |
+| `todo`                           | a component the compiler skipped — see the bail-outs below       |
+
+Four of those need a word beyond the row.
+
+**`react/rule-suppression`, and the suppression nothing catches.** The compiler
+skips any function holding a suppression of one of its rules — the violation it
+was told to ignore might be the one that makes compiling unsafe — so a disable
+comment costs that component every memo, not just the diagnostic. This rule
+reports it. What it reads is the **rule name**, not the directive keyword:
+`eslint-disable` and `oxlint-disable` both draw it when they name a
+`react-hooks/*` rule, and **neither draws it for the `react/*` names this base
+actually states**.
+
+So the house form of an escape hatch — `oxlint-disable react/purity -- reason`,
+which is how every other rule here is answered — is the one spelling that
+silently un-optimizes a component. Nothing in the gate says so. If you must
+suppress a compiler judgement, know that the component stops being compiled, and
+prefer fixing the code; dev-config#91 tracks the rule ever catching the form this
+base makes natural. Both halves are driven in `tests/lint-policy-react.test.ts`,
+the silence included.
+
+`react/hooks` reports the same conditional call, at the same line and column, as
+`react/rules-of-hooks`, and `react/exhaustive-effect-dependencies` reports the
+same missing dependency as `react/exhaustive-deps`. Both older rules stay anyway,
+which is the one place this base accepts two rules over one line, and one fact
+settles both: they reach a hook called from a function that is neither a
+component nor a hook, and that function is not a component, so the compiler never
+analyses it and says nothing. Dropping either would trade a duplicated
+diagnostic for a missing one.
+
+`react/invariant` is the sharp edge, and it is not a judgement about your code at
+all. A class declared inside a component draws `[InferMutationAliasingEffects]
+Expected value kind to be initialized` — an upstream assertion firing, with no
+user-facing rule behind it and no advice in the message. The fix is to hoist the
+class to module scope, which is where a class wants to be regardless. It is in
+the table's suite as a fixture so that the day upstream turns it into a real
+diagnostic, the change is visible here rather than surprising in a consuming
+repo.
+
+#### The bail-outs
+
+`react/todo` is the last row and the misleading name — it has nothing to do with
+the word `todo` in a comment, which is `no-warning-comments`. A bail-out is not a
+violation: it is the compiler saying it declined to optimize the whole component,
+so every memo it would have inserted is simply absent. Switched off, that is
+silent — exactly the components nothing optimized are the ones that draw nothing
+— and every other row above holds without it, which is why the base states this
+one rather than leaving it to a category.
+
+The construct the diagnostic names is usually a shape one of the house picks
+already owns, so the fix is to restore the house shape rather than to disable the
+rule; the diagnostic names the compiler's problem and never that shape, which is
+the one thing to know before reading one. Measured against the fleet's real
+React, all 22 bail-outs are two shapes: a `try`/`finally` in a component, and an
+`await import(...)` inside one. A generator body and a logical assignment bail
+out too and occur nowhere in the fleet.
+
+Every row above is driven against a fixture in `tests/lint-policy.test.ts`,
+`incompatible-library`, `rule-suppression` and `syntax` excepted — none of the
+shapes tried here provoked those three, so each carries the row a reader who hits
+it needs and no case claiming a check nothing drives. The suite holds the two
+halves the table cannot: that the set of rules it drives plus those three is
+exactly the set the base enables, and that each of them still reports — a rule
+that stays a name and goes quiet fails there rather than passing as a config
+switched on and answering for nothing.
+
+### The imports a pick has already answered
+
+Four of the stack's picks are decisions about which import to reach for, and
+this is where they stop being a thing to remember. Each diagnostic names **what
+the import lost to**, because it is the only place the loser of that decision is
+standing:
+
+| Import                                                 | From                    | Where                 | Instead                                                 | Carrier                        |
+| ------------------------------------------------------ | ----------------------- | --------------------- | ------------------------------------------------------- | ------------------------------ |
+| `useMemo`, `useCallback`                               | `react`                 | everywhere            | the React Compiler inserts the memo; delete the wrapper | `no-restricted-imports`        |
+| `beforeEach`, `afterEach`                              | `bun:test`              | everywhere            | a call the case makes itself, and `await using`         | `no-restricted-imports`        |
+| `useEffect`, `useLayoutEffect`, `useSyncExternalStore` | `react`                 | outside `**/hooks/**` | a named hook whose name says what it subscribes to      | `anti-slop/no-unnamed-effects` |
+| `useQuery`, `useInfiniteQuery`                         | `@tanstack/react-query` | under `**/routes/**`  | the loader's `ensureQueryData` and `useSuspenseQuery`   | `anti-slop/no-raw-query-hooks` |
+
+The suspense pair, `beforeAll`/`afterAll`, and every other React hook are
+untouched: what is banned is the name, not the module.
+
+**Why two carriers.** A ban that holds in every file is an entry in
+`no-restricted-imports`, which is what that rule is for. A ban a file's position
+decides cannot be: an override REPLACES a list-shaped rule rather than adding to
+it, so scoping one that way would take away every entry it did not restate — a
+consuming repo's [own lock](#locking-a-settled-decision) among them, wherever the
+block reached. A plugin rule's scalar `"off"` replaces only itself, so the two
+positional bans are rules of the plugin and no block in the base redefines a
+list-shaped rule at all. `tests/oxlint-base.test.ts` holds it to both halves.
+
+The two carriers differ in what they can see, and both differences are graded in
+`tests/lint-policy.test.ts`:
+
+- The plugin rules follow the name past every spelling that reaches it without
+  importing it — renamed, off a namespace, destructured off one, through
+  `await import`, and re-exported from a barrel (`export { useEffect } from
+"react"` is refused at the barrel, which is the end that can still tell). They
+  also leave a **type-only** import alone: `import type { useEffect }` borrows
+  the signature without reaching the value.
+- `no-restricted-imports` refuses a namespace import and a renamed one, and
+  refuses a type-only import as well, which it gives no way to allow. Neither
+  `useMemo` nor `beforeEach` has a use as a type, so that costs nothing here —
+  and the day a name on that list does, it is the carrier that has to change.
+
+The grant is the directory, which is the limit both scoped rules carry: inside
+`hooks/` every spelling of the effect trio is allowed, a barrel re-exporting it
+included, exactly as `env.ts` may re-export what `no-env-access` refuses
+everywhere else.
 
 ### Overrides
 
-Two facts are true of a file because of where it sits, not what it contains:
+Some facts are true of a file because of where it sits, not what it contains:
 
 ```json
 {
@@ -220,26 +409,65 @@ Two facts are true of a file because of where it sits, not what it contains:
         "anti-slop/no-real-timers": "error"
       }
     },
-    { "files": ["src/server/**", "server/**", "apps/api/**"], "rules": { "no-console": "error" } }
+    { "files": ["src/server/**", "server/**", "apps/api/**"], "rules": { "no-console": "error" } },
+    { "files": ["**/env.ts"], "rules": { "anti-slop/no-env-access": "off" } },
+    {
+      "files": ["**/*.test.ts", "**/*.spec.ts", "**/tests/**", "**/e2e/**"],
+      "rules": {
+        "anti-slop/no-env-access": "off",
+        "typescript/consistent-type-assertions": "off",
+        "typescript/no-unsafe-type-assertion": "error"
+      }
+    },
+    { "files": ["**/routes/**"], "rules": { "anti-slop/no-raw-query-hooks": "error" } },
+    {
+      "files": ["**/hooks/**"],
+      "rules": {
+        "anti-slop/no-unnamed-effects": "off",
+        "anti-slop/no-raw-query-hooks": "off"
+      }
+    }
   ]
 }
 ```
 
 A test file is where the four scoped rules of [the plugin](#the-anti-slop-plugin)
 apply, and where a helper one `describe` uses belongs inside it rather than
-hoisted to module scope. And server code writes through the structured logger, so
+hoisted to module scope. Server code writes through the structured logger, so
 `no-console` rises from `warn` to `error` on the server globs — a one-shot CLI
 under those paths carries a file-level disable with its reason, which is the shape
-the directive rule below already requires.
+the directive rule below already requires. And `env.ts` is [the one module that
+reads the environment](#the-environment-is-read-in-one-module), while a suite is
+where a variable is set for a spawned process rather than read for its value, and
+where a case asserts about a value nothing typed — which is why that block names
+**directories** as well as suffixes: a suite's helpers are that same code one
+file over, under no suffix at all.
+
+The last two blocks are the [import bans](#the-imports-a-pick-has-already-answered)
+that depend on where a file sits, each a scalar on a rule of its own. `hooks/`
+comes last of the two, so that a hook colocated under `routes/` is graded as a
+hook — an effect belongs there, and so does the fetch-on-interaction the raw
+query pair is for — and a `routes/` directory nested under `hooks/` reads the
+same way, for the same reason.
 
 **An override replaces a rule's whole configuration; it does not add to it**
 (oxc#12179). An override that says nothing about a rule inherits it whole, so the
 cost lands only where one is redefined: an override restating a list-shaped rule
 to change a single thing about it silently exempts every file it matches from
-every entry it did not restate, in every repo extending the base. Nothing here
-redefines one today, and `tests/oxlint-base.test.ts` is what keeps that honest —
-it proves the semantics against a config it builds itself, and holds any override
-that does redefine one to carrying every entry the top level states.
+every entry it did not restate, in every repo extending the base. That is why the
+two blocks above spell out every entry they owe their files rather than the one
+they were written for, and `tests/oxlint-base.test.ts` is what keeps them honest
+— it proves the semantics against a config it builds itself, then holds every
+override that redefines a list-shaped rule to carrying every entry the top level
+states.
+
+The list an override replaces includes **the consuming repo's own entries**,
+which is why no block in the base redefines one at all: any that did would take
+every repo's [settled-decision lock](#locking-a-settled-decision) away wherever
+it reached, from a file nobody in that repo is reading. A ban a file's position
+decides is carried as a rule of its own instead, and `oxlint-base.test.ts` grades
+both halves — that no override in the base states a list-shaped rule, and that a
+repo's own lock survives inside the directories the base scopes a ban to.
 
 `overrides` survive `extends`, so a consuming repo inherits both without naming
 them.
@@ -258,16 +486,34 @@ immediately while the old ones drain, and the whitelist going empty is what
 deletes the block — a ratchet, tracked by an issue, not a permanent carve-out.
 The reference example for the choke messages is nfp-elysia's `.oxlintrc.json`.
 
-These rules are **per-repo and never go in the base**: a decision that is settled
-for one repo's stack is not settled for another's, and a base that carried them
-would be answering a question nobody in the consuming repo asked.
+A lock like that is **per-repo**: a decision settled for one repo's stack is not
+settled for another's, and a base that carried it would be answering a question
+nobody in the consuming repo asked.
+
+One thing to know before writing one: a rule's configuration is **replaced across
+`extends`**, not merged, so a repo stating `no-restricted-imports` or
+`no-restricted-globals` of its own drops every entry the base states for it — the
+memoisation and `bun:test` bans, and the three ESM globals, become unenforced in
+that repo, silently. (The two positional bans are unaffected: they are rules of
+their own, and a repo redefining a list-shaped rule cannot reach them.) Restate
+the entries beside your own until
+[dev-config#86](https://github.com/gokayo43/dev-config/issues/86) makes that a
+gate rather than a thing to remember. What the base does carry is the other kind —
+[a pick STACK.md makes for the whole fleet](#the-imports-a-pick-has-already-answered),
+where the question is the same in every repo and the answer is the same too. The
+test is which document the message would cite, not which rule it is written as.
 
 ### Architecture rules
 
 `max-lines` denies at 1000: a file crossing 1000 lines is a presumptive blocker,
 and the linter is where that gets said out loud. `max-depth` (4) and `complexity`
-(20) warn at oxlint's own defaults, pinned so an upstream default change cannot
-move the gate. `import/no-cycle` denies.
+(20) deny at oxlint's own thresholds, pinned so an upstream default change cannot
+move the gate. Complexity is counted in the **`modified`** variant, which charges
+a whole `switch` one decision rather than one per `case`: an exhaustive switch
+over a discriminated union is the house shape for a total mapping — it is what
+`typescript/switch-exhaustiveness-check` asks for — and under the classic count a
+union of two dozen members is over the limit by being answered at all.
+`import/no-cycle` denies.
 
 ### Type-aware rules
 
@@ -281,8 +527,10 @@ Denied: `typescript/no-floating-promises`, `typescript/no-misused-promises`,
 `typescript/switch-exhaustiveness-check`,
 `typescript/no-unnecessary-type-assertion`, and the unsafe-`any` family —
 `no-unsafe-argument`, `no-unsafe-assignment`, `no-unsafe-call`,
-`no-unsafe-enum-comparison`, `no-unsafe-member-access`, `no-unsafe-return`.
-Warned: `typescript/prefer-nullish-coalescing`.
+`no-unsafe-enum-comparison`, `no-unsafe-member-access`, `no-unsafe-return`, and
+`typescript/prefer-nullish-coalescing` — `||` treats `0` and `""` as absent,
+which is a bug wherever either is a legal value, and `??` is what the code
+almost always meant. Nothing here is warned.
 
 `no-unnecessary-condition` fires on any check TypeScript already proved
 redundant, which includes real validation at a trust boundary — a parsed JSON
@@ -314,7 +562,7 @@ Type-aware rules catch what `any` touches; they do not see a plain `as`. So
 `admin as User as object`, an `unknown` parameter that never gets parsed, a
 function that hands `unknown` back, and a `Record<string, unknown>` value
 contract all pass a fully type-aware run — and assertion laundering is precisely
-the move an agent makes to silence the rules above. Eleven rules close that,
+the move an agent makes to silence the rules above. These rules close that,
 shipped in this package as an oxlint JS plugin and enabled at `error` by the
 base:
 
@@ -331,8 +579,22 @@ base:
 | `no-reflect-get`             | `Reflect.get`, which answers `any` for a property read                 |
 
 Where a ported rule overlapped oxlint's own `typescript/no-unsafe-type-assertion`
-— which the base denies through `suspicious` — both were run over the same
-fixtures and only the stronger one kept.
+both were run over the same fixtures and only the stronger one kept.
+
+Two more rules are this repo's own, and answer a different question again — not
+what a type says, but which import a settled pick already answered:
+
+| Rule                 | What it rejects                                                            |
+| -------------------- | -------------------------------------------------------------------------- |
+| `no-unnamed-effects` | React's effect trio outside `hooks/`, where the hook's name states the job |
+| `no-raw-query-hooks` | `useQuery`/`useInfiniteQuery` in a route, whose data the loader owns       |
+
+They are rules rather than `no-restricted-imports` entries because their answer
+depends on where the file sits — see [the two
+carriers](#the-imports-a-pick-has-already-answered) for why that decides it — and
+each follows its names through every spelling that reaches the value without
+importing it, a re-exporting barrel included, while leaving a type-only import
+alone.
 
 `no-chained-type-assertions` is the one that overlaps and stays. The native
 rule covers every chain that fabricates a type, because such a chain has a
@@ -387,6 +649,55 @@ a `mock` property on it is not a stand-in at all. For `no-local-module-mocks`
 the line is the specifier: a package is a true external boundary, so
 `mock.module("stripe", …)` is not what that rule is about.
 
+#### The environment is read in one module
+
+`no-env-access` answers a different question from the rules above: where
+configuration comes from. It refuses `process.env`, `Bun.env` and
+`import.meta.env` everywhere except `**/env.ts` and a suite.
+
+| Where           | What it is                                                              |
+| --------------- | ----------------------------------------------------------------------- |
+| `env.ts`        | the one module that reads the environment, and validates it             |
+| a suite         | where a variable is _set_ for a spawned process, not read for its value |
+| everywhere else | import the parsed value from `env.ts`                                   |
+
+`env.ts` parses the whole environment through the repo's schema library — Effect
+Schema or zod, per STACK — and throws on anything missing or malformed, at import
+time. The two halves are one convention: the schema is what makes a missing
+variable stop the process at startup, and the lint rule is what stops a second
+place from reading around it. `process.env.PORT ?? "3000"` scattered through a
+codebase is a deploy pointed at nothing that comes up green, and every default is
+a fact about production written by whoever was editing that line.
+
+The glob is `env.ts` exactly, in any directory, and deliberately nothing wider:
+`env.client.ts` and `src/env/index.ts` are ordinary source files the rule still
+grades. A repo that genuinely needs a second env module writes the switch-off and
+its reason in its own `.oxlintrc.json`, which the repo contract's off-reason
+walker holds to the same bar as any other — a decision a reader can find, rather
+than a glob that forgave it silently.
+
+The rule asks one question — **does this expression denote the environment
+holder?** — and hangs every answer site off that one derivation, because a rule
+deriving it twice catches a holder written one way and is silent on the next. The
+holder is `process`, `Bun` or `import.meta`: read off the global object under any
+of its four names, held by a `const` given one once, imported from `bun` or
+`node:process` statically or dynamically. Off that, `env` is read as a member
+(`process.env`), in brackets, in a substitution-free template, or by
+**destructuring the holder** — `const { env: settings } = Bun` reads the
+environment with no `.env` anywhere in the file — and is then handed on whole, or
+written back into, each with its own diagnostic.
+
+Two shapes are refused at the module edge rather than at a read, because by the
+read there is nothing left to see: a named import of `env` binds it under a name
+of the file's choosing, and `export { env } from "node:process"` — or `export *`
+— creates no local binding at all while the far side imports a relative specifier
+one file cannot read across. A re-export of anything else from the same module,
+`export { cwd }`, is not laundering and is left alone.
+
+So is a property called `env` on an object of the file's own, a parameter that
+shadows `process`, another property of the holder (`const { argv } = process`),
+and a key computed from a value, which has no name to read and is not guessed at.
+
 #### What they do not see
 
 A plugin reads one file at a time and has no type checker under it. Two
@@ -422,9 +733,16 @@ anything writing through the container (`spies.send = real`) all make the
 literal a poor witness, and a rule that read it anyway would report a stand-in
 that is not there by the time the assertion runs.
 
-**A matcher computed from a value** has no name to read: `expect(x)[matcher](1)`
-is left alone, while `expect(x)["toHaveBeenCalledTimes"](1)` has one and is
-refused.
+A **`let` given the holder** is the same limit and the same answer: `let p =
+process; p.env.PORT` is past `no-env-access`, exactly as `let R = Reflect` is
+past the reflect rules. The alternative is a rule that reports a name whose value
+something later reassigned, which is a diagnostic about code that is not there —
+and a repo can only be asked to keep a rule that is right about what it names.
+
+**A key computed from a value** has no name to read: `expect(x)[matcher](1)` is
+left alone, while `expect(x)["toHaveBeenCalledTimes"](1)` and
+``expect(x)[`toHaveBeenCalledTimes`](1)`` both have one and are refused — a
+template with no substitutions in it is a spelling, not a computation.
 
 The one place a rule refuses rather than shrugs is a module specifier it cannot
 read: `mock.module(import.meta.resolve("./x.ts"))` fails asking to be written as
@@ -479,7 +797,7 @@ Two facts about how it is wired, both load-bearing:
   and this directory is inside `node_modules` for every repo that consumes it.
   `tsc` still checks it in this repo, through `checkJs` and JSDoc types.
 
-`tests/anti-slop.test.ts` drives the nine with the real binary: a block of cases
+`tests/anti-slop.test.ts` drives the unscoped rules with the real binary: a block of cases
 per rule — alias chains, shadowed built-ins, type parameters bound by default,
 permuted between two aliases and named for the aliases they shadow, the scope a
 binding resolves in, and the clean tree each of those has to leave alone — plus
@@ -496,6 +814,24 @@ same source in a `.ts` or a `.tsx`, since a rule that fired everywhere is one
 every repo would turn off. Most of its cases are the spellings that would
 otherwise turn a rule off: an `as` on an import, a namespace, an optional link,
 a global reached through `globalThis`, a matcher in brackets.
+
+`tests/anti-slop-env.test.ts` is `no-env-access`, which has a third question
+again: the base has to grade it in a source file, say nothing in an `env.ts` at
+any depth or under a suite's suffixes and directories, and still grade
+`env.client.ts`, `src/env/index.ts`, `test-utils.ts` and `src/testing/`. It also
+takes the reason out from above each of the base's two switch-offs for it — found
+by the `files` glob of the block that owns it, not by position — and requires the
+contract's off-reason walker to find both: a plugin rule inside an `overrides`
+block, which is what the fleet's own escape from this rule will be.
+
+`tests/lint-policy.test.ts` is the same shape over the picks a file's position
+decides, whichever of the two carriers states one: one tree under the shipped
+base, a file per case, and an assertion about which of them drew what. It grades
+the scoped bans on both sides of every glob — a hook at any depth, a name that
+merely reads like one, a route under a hook and a hook under a route — every
+spelling that reaches a banned name without importing it, and the **message**,
+since a ban whose diagnostic does not name the pick the import lost to is a rule
+the next person argues with rather than follows.
 
 The harness in `tests/lint-fixture.ts` carries cases of its own, because a
 plugin that throws and a config oxlint refuses both produce a run with no
@@ -759,37 +1095,48 @@ and what is ignored. Every other repo's gate is only as honest as those two
 lanes, which is why they run first.
 
 The replay suite needs a real Postgres, since what it asserts is what two
-databases end up holding. CI publishes one as a service on 5432, which is where
-the suite looks unless `TEST_DATABASE_URL` says otherwise; locally that is
+databases end up holding. It creates and **drops** databases on whatever it is
+pointed at, so `TEST_DATABASE_URL` is required and the suite refuses to guess —
+`tests/postgres.ts` is its one reader. There used to be a `localhost:5432`
+default, on the argument that a suite naming its own databases costs a stranger
+nothing; that stopped being true when `localhost` became a box running the
+fleet's stacks and its CI runners. Locally:
 
 ```sh
-docker run --rm -d -p 5432:5432 -e POSTGRES_PASSWORD=postgres postgres:16-alpine
+docker run --rm -d -p 127.0.0.1:5497:5432 -e POSTGRES_PASSWORD=postgres postgres:16-alpine
+export TEST_DATABASE_URL=postgres://postgres:postgres@127.0.0.1:5497/postgres
 ```
 
-It creates and drops databases on whatever it is pointed at, so point it at a
-throwaway. Two runs may share one: every name either the suite or a gate puts on
-that server carries what tells the runs apart — the process for the suite's own
-databases, and the checkout being worked on for the two a gate builds for itself
+Two runs may share one server: every name either the suite or a gate puts on it
+carries what tells the runs apart — the process for the suite's own databases,
+and the checkout being worked on for the two a gate builds for itself
 (`upgrade_path_<digest>` and `backfill_<digest>`).
 
 The limiter conformance suite needs a Redis, since what it grades is a bucket
 shared by two processes and a limiter whose Redis is gone. It **flushes** what it
-is given, so unlike the Postgres above it has no default at all: `TEST_REDIS_URL`
-is required and the suite refuses to guess. A default address is how a suite
-wipes the Redis four stacks on one box were sharing.
+is given, and is required for the same reason and refuses to guess for the same
+reason. A default address is how a suite wipes the Redis four stacks on one box
+were sharing.
 
 ```sh
-docker run --rm -d -p 6390:6379 redis:7-alpine
+docker run --rm -d -p 127.0.0.1:6390:6379 redis:7-alpine
 export TEST_REDIS_URL=redis://127.0.0.1:6390
 ```
+
+Both publish on `127.0.0.1` explicitly: a bare `-p 5432:5432` binds `0.0.0.0`,
+and Docker's forwarding rule answers it on the box's public address whatever
+`ufw` is set to.
 
 The invariant sweep's suite drives a real browser against a real server, because
 every part of what that fixture claims is a browser fact. It needs Playwright's
 chromium, which CI installs and a machine gets with:
 
 ```sh
-bunx playwright install --with-deps chromium-headless-shell
+bunx playwright install chromium-headless-shell
 ```
+
+No `--with-deps`: it shells out to `sudo apt-get`, which the CI runner's account
+may not run, and the shared libraries it installs are already on the box.
 
 The test-suite gate's own suite needs passwordless `sudo`, which is what taking a
 network namespace costs — a runner has it, and a machine that does not cannot run
@@ -838,6 +1185,123 @@ self-hosted global configuration, and in that mode a global-only option like
 `binarySource` validates clean — in a shared preset every repo extending it
 would drop the option on the floor. `--strict` makes warnings and a pending
 config migration exit non-zero rather than print.
+
+## One dev server per worktree
+
+`dev-server.ts` is the one root module a repo **runs** rather than imports:
+installing this package puts a `dev-server` binary in `node_modules/.bin`, so
+every worktree of the repo has the same six commands without a script of its
+own. `dev-server-derive.ts` beside it is the half that can be answered without a
+machine — what a worktree's server is called, which port it gets, and what its
+record has to be — and is imported by the bin and by nothing else.
+
+| Command                     | What it does                                                                                              |
+| --------------------------- | --------------------------------------------------------------------------------------------------------- |
+| `bun run dev-server up`     | starts this worktree's server if it is not up, waits until it answers HTTP, prints its URL                |
+| `bun run dev-server down`   | stops it — SIGTERM to its process group, SIGKILL ten seconds later; exit 0 whether or not one was running |
+| `bun run dev-server status` | every server the repository has: branch, port, pid, whether the process is alive, and whether it answers  |
+| `bun run dev-server url`    | this worktree's URL, or exit 1 when no server is up                                                       |
+| `bun run dev-server logs`   | the tail of this worktree's log; `-f` follows it                                                          |
+| `bun run dev-server sweep`  | stops and forgets the servers of worktrees that are gone, and collects records that will not decode       |
+
+Stdout is the answer — a URL, the table, log lines — and everything a person
+reads rather than pipes goes to stderr. So `open "$(bun run dev-server url)"` is
+a thing that works, and `up` in a script hands back a URL rather than a
+paragraph. A command refuses an argument it does not take rather than ignoring
+it, and it does so before it reads anything off the machine: a typo outside a
+repository prints the usage rather than git's complaint.
+
+**Linux only.** The child is put in a session of its own with util-linux
+`setsid`, and the proof that a recorded pid is still the process this tool
+started is read out of `/proc`. Neither exists on macOS. Nobody on this fleet
+runs one, so there is no second path here rather than an untested one.
+
+**The whole contract with the repo is its `dev` script: it must bind `$PORT` on
+`$HOST`.** Four names are handed to it and nothing is read back out —
+`PORT`, `DEV_PORT`, `HOST=127.0.0.1` and `SITE_URL`, which are
+`project-template`'s names, so a template repo needs no edit at all. Loading a
+`.env` stays the repo's own business.
+
+`HOST` is a request rather than a guarantee, so `up` asks the machine once the
+server answers: if the port also answers on `127.0.0.2` or on any of this
+machine's real addresses, the dev script is binding every interface instead of
+`$HOST`, and the child is stopped. A dev server reachable from the LAN is
+somebody else's code running on this machine's ports.
+
+**Identity is the worktree, never a name derived from it.** The record and the
+log are `<branch-slug>-<tag>.json` and `.log`, where the slug is for a reader
+and the tag is a hash of the worktree's own path. Two branches that differ only
+in punctuation or case reduce to one slug, and two detached worktrees share one
+short commit — so anything keyed on a readable name is one record and one port
+for two servers, which is one worktree serving another's code under a URL it
+printed itself. Every command also checks the `worktree` field of what it reads
+and refuses a record naming a different checkout, because a 32-bit tag is short
+enough to owe that check.
+
+**The port is derived, never allocated.** A worktree's block is ten ports, hashed
+(FNV-1a) from `<package name>/<branch>` and landing between 20000 and 60000, and
+the first port in that block nothing is holding is the one claimed. The branch is
+hashed **as git spells it** — `feat/x` and `feat-x` are two worktrees and must be
+two blocks — and a detached worktree hashes its path instead, since its name is
+not its own. The package name is in the hash and not merely beside it: every repo
+on a machine has a `main`. The range deliberately overlaps the ephemeral ports
+the kernel hands out, which no span of this size could avoid, so every port is
+probed before it is claimed rather than assumed free.
+
+**A claimed port is refused, never stepped over.** If something else is listening
+on the port a worktree already claimed, `up` says so, names the port and exits 1.
+Falling forward to the next free one would keep `up` working and quietly break
+the only property the derivation is for — that this worktree's URL is still this
+worktree's URL tomorrow. `dev-server down` gives the claim up, and the next `up`
+derives again.
+
+**One `up` per worktree at a time**, held over the whole read-decide-spawn-write
+with a lock file beside the record. Two of them racing that sequence both bind:
+measured, five concurrent pairs left four servers running that no record named.
+A lock whose holder is gone is taken rather than waited on — the holder is named
+by pid, boot id and start tick, exactly as a server is — so a run killed
+mid-`up` costs the next one nothing.
+
+**A recorded pid is not trusted on its number.** A pid is reused, and a reboot
+recycles every one of them at once, so the record carries the boot id it was
+taken on and the tick the process started at (`/proc/<pid>/stat` field 22); all
+three are re-read before any signal, and a mismatch means the record names
+nobody. Since what gets signalled is a process _group_, the pid must also still
+lead its own — which `setsid` guarantees for anything this tool started, and
+nothing else. A record whose pid or port is a number no derivation here could
+have produced is not a record at all.
+
+**The records live in git's common directory** — `$(git rev-parse
+--git-common-dir)/dev-server/`, mode 0700, with each record and log 0600 because
+the log holds whatever the dev script printed, environment included. That is one
+directory per repository whatever `git worktree` does to it: never tracked, so no
+consumer is asked for a `.gitignore` line, and still there when a worktree's own
+directory is not — which is the state `sweep` exists for. A record holds the
+worktree path, the branch, the package name, the port, the pid, the boot id, the
+start tick, the log path and when it started; it is written whole and moved into
+place, and `up` writes it the moment there is a pid to write. The window that
+remains is `up` itself dying between the spawn and that write: the child is then
+orphaned with no record, and what surfaces it is the next `up` refusing the port
+it is holding.
+
+One unreadable record no longer takes the repository's tool down with it.
+`status` lists it as junk with its path, `sweep` collects it, and the other
+commands say so on stderr and carry on as if it were absent.
+
+**`sweep` is the one command that reads `git worktree list`.** A record whose
+worktree is no longer there — removed with `git worktree remove`, or deleted
+outright, which git still lists as prunable — is a server nobody can stand in
+front of any more, so it is stopped and its record and log are dropped. The rule
+is "the path is not there", which a worktree on an unmounted volume also
+satisfies: `sweep` would stop its server too. Every other record is left alone.
+
+`up` waits two minutes for the first HTTP response before it gives up, stops the
+child and prints the last 40 log lines. It stops waiting the moment the child
+exits, rather than sitting out the clock for a process that is already gone.
+`DEV_SERVER_READY_TIMEOUT_MS` shortens that and is read before anything is
+started, which is what this repo's own suite sets. The log is appended to rather
+than truncated, with a dated header per run, so a spawn that fails on its first
+line does not destroy the log somebody came to read.
 
 ## Secret scanning
 
@@ -888,6 +1352,37 @@ The gate is a workflow in this repo — `.github/workflows/check.yml` — and re
 call it instead of retyping it. A consuming repo's `.github/workflows/ci.yml` is
 the whole of its CI:
 
+### Where it runs
+
+Every job in `check.yml` and in this repo's own `ci.yml` declares
+`runs-on: [self-hosted, linux]`. **A caller needs a runner carrying both labels,
+or its jobs queue until one appears** — there is no timeout on a queued job, so
+the symptom is a run that never starts rather than one that fails. dev-config#88
+is where the move is argued.
+
+Three things follow from the runner being a shared, persistent machine rather
+than a fresh cloud VM, and they are why the workflows look the way they do:
+
+- **Service containers publish on `127.0.0.1` and on a port the daemon picks**
+  (`ports: ["127.0.0.1::5432"]`), never on a fixed one. A bare `5432:5432` binds
+  `0.0.0.0`, and the DNAT rule Docker installs carries no destination match — so
+  the container answers on the box's public address whatever the host firewall
+  says, since `ufw` does not filter the FORWARD path. A fixed port is also
+  single-occupancy, and two runners' jobs overlapping is the ordinary case. Read
+  the assignment back with `${{ job.services.postgres.ports['5432'] }}`.
+- **The boot gate's app gets an allocated port too.** `health-url` defaults to
+  `http://localhost:${PORT}/api/health`, where `PORT` is a free port the job
+  bound and exported before the gate runs. 3000 is the framework default and
+  therefore the port something else on a shared box already holds. `PORT` is the
+  platform convention; an app that ignores it needs `start-command` and
+  `health-url` set explicitly.
+- **The workspace is not discarded when the run ends.** What cleans it is
+  `actions/checkout` at the start of the next run.
+
+The Lighthouse example under "Static sites" deliberately stays on
+`ubuntu-latest`: its numbers are the assertion, and a box that is also serving
+production moves them for reasons no commit caused.
+
 ```yaml
 name: CI
 
@@ -911,32 +1406,32 @@ jobs:
       database: postgres
 ```
 
-| Input                 | Default                            | Effect                                                                                                                                                                                                                                                                                                                                                                                                       |
-| --------------------- | ---------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `build`               | `false`                            | Runs `bun run build` before the static gate and before the boot gate.                                                                                                                                                                                                                                                                                                                                        |
-| `affected`            | `false`                            | Runs the `typecheck` lane over the packages a pull request changed, via turbo's `--affected` with `TURBO_SCM_BASE` set to the pull request's base commit. Needs `turbo.json` at the root and is refused without one; ignored on a push, where `main` stays the full run.                                                                                                                                     |
-| `database`            | `none`                             | `postgres` adds the database job: an empty Postgres, the migrations replayed onto it twice, the app booted against the result, and a k6 ramp over every route it serves. `external` says a workflow wrapping this one runs the database gates in that job's place. `none` is a repo with no schema. Anything but `none` makes `db:migrate` part of the repo contract; anything outside the three is refused. |
-| `compose`             | `false`                            | Holds `docker-compose.yml` to the deployment shape.                                                                                                                                                                                                                                                                                                                                                          |
-| `mutation-lane`       | `false`                            | Mutates the domain files this branch changed and fails on a mutant its own lines left undetected. Reads the pure domain from the `boundaries/elements` entry typed `domain`; needs `@stryker-mutator/core` and `@hughescr/stryker-bun-runner` among the repo's devDependencies.                                                                                                                              |
-| `mutation-floor`      | `""`                               | The mutation score the changed domain files must hold, as a fraction between 0 and 1. Empty publishes the score and enforces nothing. Needs `mutation-lane: true`.                                                                                                                                                                                                                                           |
-| `upgrade-gate`        | `false`                            | Also proves that a database upgraded from the base ref's migrations reaches the schema a fresh one gets. Needs `database: postgres`; for repos whose database is deployed.                                                                                                                                                                                                                                   |
-| `semantic-fixtures`   | `""`                               | A directory of the repo's own holding the rows a deployed database already has, as base-compatible SQL, each with the assertion the current contract makes about them: written into the base ref's replay and graded after this branch's migrations run over them. Needs `upgrade-gate: true`.                                                                                                               |
-| `contract-exemptions` | `""`                               | Repo-contract facts this repo is structurally unable to satisfy, space-separated. A marketing site names `docs-spine`; a repo being wound down names `lifecycle-retire`.                                                                                                                                                                                                                                     |
-| `data-jobs-external`  | `""`                               | Where the deployment already runs a live repo's backup and restore drill, when they are not this repo's own scripts — the job, its schedule and the runbook. Empty asks for `scripts/backup.sh` and `scripts/restore-drill.sh` with their units. The reason is the waiver, so there is no way to claim it without naming the jobs.                                                                           |
-| `stack-allowlist`     | `""`                               | Packages this repo keeps against the stack denylist, as `<package> -- why` entries, one per line; an entry is refused when it carries no reason, when nothing here declares the package any more, or when the denylist has stopped denying it.                                                                                                                                                               |
-| `backfill-seed`       | `""`                               | Shell code putting a database into the state this repo's backfill was written for. Set it with `backfill-command` or not at all.                                                                                                                                                                                                                                                                             |
-| `backfill-command`    | `""`                               | The backfill, as shell code: run twice against the state `backfill-seed` wrote, in a database of the check's own, with the data compared either side of the second run.                                                                                                                                                                                                                                      |
-| `start-command`       | `bun run start`                    | How the boot gate starts the app.                                                                                                                                                                                                                                                                                                                                                                            |
-| `health-url`          | `http://localhost:3000/api/health` | What the boot gate polls until it answers 200.                                                                                                                                                                                                                                                                                                                                                               |
-| `probe-command`       | `""`                               | A command of the repo's own, run as shell against the booted app after it answers its health route and before the ramp, with the app's URL in `HEALTH_URL`. Its stdout is the verdict: every line it writes there is one problem, whatever it exits with.                                                                                                                                                    |
-| `probe-timeout`       | `""`                               | How many seconds `probe-command` gets before it is killed. Empty takes the bound `db-gate/probe.ts` declares — 120 seconds today — which is where that number and the argument for it live. Needs `probe-command`.                                                                                                                                                                                           |
-| `timestamp-allowlist` | `""`                               | `schema.table.column -- why` entries whose value really is a wall-clock reading rather than an instant, one per line; an entry is refused when it carries no reason, when the schema has no column of that name, or when that column is no longer a wall-clock one.                                                                                                                                          |
-| `capacity-path`       | `""`                               | Paths to ramp alongside the health route, one per line.                                                                                                                                                                                                                                                                                                                                                      |
-| `capacity-script`     | `""`                               | A k6 script of the repo's own, replacing the shipped ramp.                                                                                                                                                                                                                                                                                                                                                   |
-| `db-gate-evidence`    | `db-gate-evidence`                 | The artifact name for the k6 summary, the two route-log snapshots, the backfill check's three data dumps and the app's output, for a matrix that runs more than one leg.                                                                                                                                                                                                                                     |
-| `route-allowlist`     | `""`                               | Routes the ramp cannot cover, as `METHOD /path -- why` entries, one per line; one without a reason, and one the ramp did reach, are both refused.                                                                                                                                                                                                                                                            |
-| `test-network`        | `""`                               | Why this repo's suite has to reach a real network. Empty runs the suite sealed in a network namespace with nothing but loopback in it, so a live call fails where it is written. The reason is the input, and it is read in review like the reason on a lint directive.                                                                                                                                      |
-| `test-suite-evidence` | `test-suite-evidence`              | The artifact name for the junit report, for a matrix that runs more than one leg.                                                                                                                                                                                                                                                                                                                            |
+| Input                 | Default                             | Effect                                                                                                                                                                                                                                                                                                                                                                                                       |
+| --------------------- | ----------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `build`               | `false`                             | Runs `bun run build` before the static gate and before the boot gate.                                                                                                                                                                                                                                                                                                                                        |
+| `affected`            | `false`                             | Runs the `typecheck` lane over the packages a pull request changed, via turbo's `--affected` with `TURBO_SCM_BASE` set to the pull request's base commit. Needs `turbo.json` at the root and is refused without one; ignored on a push, where `main` stays the full run.                                                                                                                                     |
+| `database`            | `none`                              | `postgres` adds the database job: an empty Postgres, the migrations replayed onto it twice, the app booted against the result, and a k6 ramp over every route it serves. `external` says a workflow wrapping this one runs the database gates in that job's place. `none` is a repo with no schema. Anything but `none` makes `db:migrate` part of the repo contract; anything outside the three is refused. |
+| `compose`             | `false`                             | Holds `docker-compose.yml` to the deployment shape.                                                                                                                                                                                                                                                                                                                                                          |
+| `mutation-lane`       | `false`                             | Mutates the domain files this branch changed and fails on a mutant its own lines left undetected. Reads the pure domain from the `boundaries/elements` entry typed `domain`; needs `@stryker-mutator/core` and `@hughescr/stryker-bun-runner` among the repo's devDependencies.                                                                                                                              |
+| `mutation-floor`      | `""`                                | The mutation score the changed domain files must hold, as a fraction between 0 and 1. Empty publishes the score and enforces nothing. Needs `mutation-lane: true`.                                                                                                                                                                                                                                           |
+| `upgrade-gate`        | `false`                             | Also proves that a database upgraded from the base ref's migrations reaches the schema a fresh one gets. Needs `database: postgres`; for repos whose database is deployed.                                                                                                                                                                                                                                   |
+| `semantic-fixtures`   | `""`                                | A directory of the repo's own holding the rows a deployed database already has, as base-compatible SQL, each with the assertion the current contract makes about them: written into the base ref's replay and graded after this branch's migrations run over them. Needs `upgrade-gate: true`.                                                                                                               |
+| `contract-exemptions` | `""`                                | Repo-contract facts this repo is structurally unable to satisfy, space-separated. A marketing site names `docs-spine`; a repo being wound down names `lifecycle-retire`.                                                                                                                                                                                                                                     |
+| `data-jobs-external`  | `""`                                | Where the deployment already runs a live repo's backup and restore drill, when they are not this repo's own scripts — the job, its schedule and the runbook. Empty asks for `scripts/backup.sh` and `scripts/restore-drill.sh` with their units. The reason is the waiver, so there is no way to claim it without naming the jobs.                                                                           |
+| `stack-allowlist`     | `""`                                | Packages this repo keeps against the stack denylist, as `<package> -- why` entries, one per line; an entry is refused when it carries no reason, when nothing here declares the package any more, or when the denylist has stopped denying it.                                                                                                                                                               |
+| `backfill-seed`       | `""`                                | Shell code putting a database into the state this repo's backfill was written for. Set it with `backfill-command` or not at all.                                                                                                                                                                                                                                                                             |
+| `backfill-command`    | `""`                                | The backfill, as shell code: run twice against the state `backfill-seed` wrote, in a database of the check's own, with the data compared either side of the second run.                                                                                                                                                                                                                                      |
+| `start-command`       | `bun run start`                     | How the boot gate starts the app.                                                                                                                                                                                                                                                                                                                                                                            |
+| `health-url`          | `http://localhost:$PORT/api/health` | What the boot gate polls until it answers 200. `PORT` is a free port the job allocates and exports, because 3000 is the port a shared runner box has already given to something else. An app that does not honour `PORT` sets this and `start-command` explicitly.                                                                                                                                           |
+| `probe-command`       | `""`                                | A command of the repo's own, run as shell against the booted app after it answers its health route and before the ramp, with the app's URL in `HEALTH_URL`. Its stdout is the verdict: every line it writes there is one problem, whatever it exits with.                                                                                                                                                    |
+| `probe-timeout`       | `""`                                | How many seconds `probe-command` gets before it is killed. Empty takes the bound `db-gate/probe.ts` declares — 120 seconds today — which is where that number and the argument for it live. Needs `probe-command`.                                                                                                                                                                                           |
+| `timestamp-allowlist` | `""`                                | `schema.table.column -- why` entries whose value really is a wall-clock reading rather than an instant, one per line; an entry is refused when it carries no reason, when the schema has no column of that name, or when that column is no longer a wall-clock one.                                                                                                                                          |
+| `capacity-path`       | `""`                                | Paths to ramp alongside the health route, one per line.                                                                                                                                                                                                                                                                                                                                                      |
+| `capacity-script`     | `""`                                | A k6 script of the repo's own, replacing the shipped ramp.                                                                                                                                                                                                                                                                                                                                                   |
+| `db-gate-evidence`    | `db-gate-evidence`                  | The artifact name for the k6 summary, the two route-log snapshots, the backfill check's three data dumps and the app's output, for a matrix that runs more than one leg.                                                                                                                                                                                                                                     |
+| `route-allowlist`     | `""`                                | Routes the ramp cannot cover, as `METHOD /path -- why` entries, one per line; one without a reason, and one the ramp did reach, are both refused.                                                                                                                                                                                                                                                            |
+| `test-network`        | `""`                                | Why this repo's suite has to reach a real network. Empty runs the suite sealed in a network namespace with nothing but loopback in it, so a live call fails where it is written. The reason is the input, and it is read in review like the reason on a lint directive.                                                                                                                                      |
+| `test-suite-evidence` | `test-suite-evidence`               | The artifact name for the junit report, for a matrix that runs more than one leg.                                                                                                                                                                                                                                                                                                                            |
 
 Both evidence names default to a constant, and an artifact name may be claimed
 once per run — so a caller that runs `check.yml` as a **matrix** has to give each

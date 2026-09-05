@@ -1,3 +1,4 @@
+// oxlint-disable-next-line eslint/no-restricted-imports -- scratch databases and evidence directories dropped after each case, not setup it hides — the await using migration is dev-config#85
 import { afterEach, describe, expect, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -14,6 +15,7 @@ import {
 import { rows, textColumn } from "../.github/actions/db-gate/database.ts";
 
 import { containing } from "./matchers.ts";
+import { SERVER } from "./postgres.ts";
 import { lineage, type Migration, migratesFrom } from "./lineage.ts";
 import { history } from "./tree.ts";
 
@@ -27,8 +29,6 @@ import { history } from "./tree.ts";
  * environment, because that is the whole of the contract a repo's backfill has
  * with this gate.
  */
-const SERVER =
-  Bun.env["TEST_DATABASE_URL"] ?? "postgres://postgres:postgres@localhost:5432/postgres";
 
 const MIGRATOR = new URL("./journalled-migrator.ts", import.meta.url).pathname;
 
