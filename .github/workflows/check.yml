@@ -434,36 +434,36 @@ jobs:
           fi
           exit "$wrong"
 
-      - uses: zerefukun/dev-config/.github/actions/secret-scan@bfac236e894e842a830bb99a8364a8f560a604fe # v0.71.0
+      - uses: zerefukun/dev-config/.github/actions/secret-scan@ca8ef9b1672562f1d3ceca2bb5828867e9236a89 # v0.72.0
 
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
 
       # The declarative gates read the tree as committed, so they run before the
       # install: a repo that has drifted out of the contract says so in seconds
       # rather than after a full dependency resolution.
-      - uses: zerefukun/dev-config/.github/actions/repo-contract@bfac236e894e842a830bb99a8364a8f560a604fe # v0.71.0
+      - uses: zerefukun/dev-config/.github/actions/repo-contract@ca8ef9b1672562f1d3ceca2bb5828867e9236a89 # v0.72.0
         with:
           database: ${{ inputs.database }}
           exemptions: ${{ inputs.contract-exemptions }}
           data-jobs-external: ${{ inputs['data-jobs-external'] }}
 
-      - uses: zerefukun/dev-config/.github/actions/stack-gate@bfac236e894e842a830bb99a8364a8f560a604fe # v0.71.0
+      - uses: zerefukun/dev-config/.github/actions/stack-gate@ca8ef9b1672562f1d3ceca2bb5828867e9236a89 # v0.72.0
         with:
           stack-allowlist: ${{ inputs.stack-allowlist }}
 
       # The caller's own workflows were schema-checked and pin-checked by
       # nothing until this ran here. Needs the Bun that setup-bun installed.
-      - uses: zerefukun/dev-config/.github/actions/lint-workflows@bfac236e894e842a830bb99a8364a8f560a604fe # v0.71.0
+      - uses: zerefukun/dev-config/.github/actions/lint-workflows@ca8ef9b1672562f1d3ceca2bb5828867e9236a89 # v0.72.0
 
-      - uses: zerefukun/dev-config/.github/actions/suppression-hygiene@bfac236e894e842a830bb99a8364a8f560a604fe # v0.71.0
+      - uses: zerefukun/dev-config/.github/actions/suppression-hygiene@ca8ef9b1672562f1d3ceca2bb5828867e9236a89 # v0.72.0
 
       # docs/gates/shell-scripts.md — nothing else here reads a repo's own shell.
-      - uses: zerefukun/dev-config/.github/actions/shell-scripts@bfac236e894e842a830bb99a8364a8f560a604fe # v0.71.0
+      - uses: zerefukun/dev-config/.github/actions/shell-scripts@ca8ef9b1672562f1d3ceca2bb5828867e9236a89 # v0.72.0
 
       - if: inputs.compose
-        uses: zerefukun/dev-config/.github/actions/compose-lint@bfac236e894e842a830bb99a8364a8f560a604fe # v0.71.0
+        uses: zerefukun/dev-config/.github/actions/compose-lint@ca8ef9b1672562f1d3ceca2bb5828867e9236a89 # v0.72.0
 
-      - uses: zerefukun/dev-config/.github/actions/install@bfac236e894e842a830bb99a8364a8f560a604fe # v0.71.0
+      - uses: zerefukun/dev-config/.github/actions/install@ca8ef9b1672562f1d3ceca2bb5828867e9236a89 # v0.72.0
         with:
           git-ssh-key: ${{ secrets['git-ssh-key'] }}
 
@@ -473,7 +473,7 @@ jobs:
       # packages alone leaves lint, knip and the root typecheck reading files
       # nothing wrote this run.
       - if: inputs.build
-        uses: zerefukun/dev-config/.github/actions/build@bfac236e894e842a830bb99a8364a8f560a604fe # v0.71.0
+        uses: zerefukun/dev-config/.github/actions/build@ca8ef9b1672562f1d3ceca2bb5828867e9236a89 # v0.72.0
         with:
           cache: ${{ inputs['build-cache'] }}
 
@@ -494,7 +494,7 @@ jobs:
           bun run typecheck ${TURBO_AFFECTED:-}
       - run: bun run knip
 
-      - uses: zerefukun/dev-config/.github/actions/test-suite@bfac236e894e842a830bb99a8364a8f560a604fe # v0.71.0
+      - uses: zerefukun/dev-config/.github/actions/test-suite@ca8ef9b1672562f1d3ceca2bb5828867e9236a89 # v0.72.0
         with:
           nightly: ${{ inputs.nightly }}
           test-network: ${{ inputs['test-network'] }}
@@ -514,7 +514,7 @@ jobs:
       # every step before it down with it.
       - if: inputs['mutation-lane']
         timeout-minutes: 10
-        uses: zerefukun/dev-config/.github/actions/mutation-lane@bfac236e894e842a830bb99a8364a8f560a604fe # v0.71.0
+        uses: zerefukun/dev-config/.github/actions/mutation-lane@ca8ef9b1672562f1d3ceca2bb5828867e9236a89 # v0.72.0
         with:
           mutation-floor: ${{ inputs['mutation-floor'] }}
 
@@ -524,49 +524,6 @@ jobs:
     # Half an hour under the nightly: the fuzzer's long budget is ten minutes
     # of it, and everything before the fuzzer costs what it always costs.
     timeout-minutes: ${{ inputs.nightly && 30 || 15 }}
-
-    # Empty on every run, which is the one state no developer database is ever
-    # in. Images are pinned by digest for the same reason actions are, with the
-    # tag kept inline: that is the form Renovate's docker datasource maintains.
-    # Redis is started unconditionally — the API shape pings it from its health
-    # route, and an idle container costs a couple of seconds.
-    #
-    # `127.0.0.1::` is the `ip::containerPort` form: loopback, and a host port
-    # the daemon picks. Both halves are load-bearing on a self-hosted runner.
-    # A bare `5432:5432` binds 0.0.0.0, and Docker's DNAT rule carries no
-    # destination match, so the container answers on the box's public address
-    # whatever the firewall says — ufw does not filter the FORWARD path Docker
-    # installs. A fixed host port is also single-occupancy: two runners' jobs
-    # overlapping is the ordinary case here, and the second to start dies with
-    # "port is already allocated". The assigned port is read back below.
-    #
-    # Each `--tmpfs` covers the data directory its image declares a volume, which
-    # lint-workflows asks for (README, "Where it runs"). The caps are measured:
-    # the largest Postgres data directory a job here had left on the runner box
-    # was 201 MB, and the largest Redis one, its snapshot, under 1 MB.
-    services:
-      postgres:
-        image: postgres:16-alpine@sha256:20edbde7749f822887a1a022ad526fde0a47d6b2be9a8364433605cf65099416
-        env:
-          POSTGRES_PASSWORD: postgres
-        ports:
-          - 127.0.0.1::5432
-        options: >-
-          --health-cmd pg_isready
-          --health-interval 5s
-          --health-timeout 5s
-          --health-retries 30
-          --tmpfs /var/lib/postgresql/data:size=1g
-      redis:
-        image: redis:7-alpine@sha256:ff02b58f971e7d7d156a1267e283fcbbeee91773b6aa36c49dac28ecfe28eadf
-        ports:
-          - 127.0.0.1::6379
-        options: >-
-          --health-cmd "redis-cli ping"
-          --health-interval 5s
-          --health-timeout 5s
-          --health-retries 30
-          --tmpfs /data:size=64m
 
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -585,14 +542,25 @@ jobs:
 
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
 
-      - uses: zerefukun/dev-config/.github/actions/install@bfac236e894e842a830bb99a8364a8f560a604fe # v0.71.0
+      - uses: zerefukun/dev-config/.github/actions/install@ca8ef9b1672562f1d3ceca2bb5828867e9236a89 # v0.72.0
         with:
           git-ssh-key: ${{ secrets['git-ssh-key'] }}
 
       - if: inputs.build
-        uses: zerefukun/dev-config/.github/actions/build@bfac236e894e842a830bb99a8364a8f560a604fe # v0.71.0
+        uses: zerefukun/dev-config/.github/actions/build@ca8ef9b1672562f1d3ceca2bb5828867e9236a89 # v0.72.0
         with:
           cache: ${{ inputs['build-cache'] }}
+
+      # Empty on every run, which is the one state no developer database is
+      # ever in. Redis is started unconditionally — the API shape pings it from
+      # its health route, and an idle one costs a moment. Both listen on
+      # 127.0.0.1 alone, on ports the kernel picked, so nothing off the box
+      # reaches them and two overlapping jobs never collide; README's "Where it
+      # runs" has the rest.
+      - id: services
+        uses: zerefukun/dev-config/.github/actions/services@ca8ef9b1672562f1d3ceca2bb5828867e9236a89 # v0.72.0
+        with:
+          command: start
 
       # The port the boot gate's app listens on, picked by the kernel rather
       # than stated. 3000 is the framework default and therefore the one port
@@ -604,14 +572,13 @@ jobs:
       # PORT is the platform convention, so an app that honours it needs no
       # further wiring; one that does not sets start-command and health-url.
       #
-      # The two service URLs are written here too, rather than in the job's
-      # `env:`: the `job` context that carries a service's assigned port is
-      # available to a step and not to the job — a workflow that reads it there
-      # is refused whole before any job starts.
-      - name: Allocate a port for the app, and name the services' ports
+      # The two server URLs are written here too, rather than in the job's
+      # `env:`: the `steps` context that carries them is available to a step
+      # and not to the job.
+      - name: Allocate a port for the app, and name the servers' URLs
         env:
-          DATABASE_URL: postgres://postgres:postgres@localhost:${{ job.services.postgres.ports['5432'] }}/postgres
-          REDIS_URL: redis://localhost:${{ job.services.redis.ports['6379'] }}
+          DATABASE_URL: ${{ steps.services.outputs.database-url }}
+          REDIS_URL: ${{ steps.services.outputs.redis-url }}
         run: |
           # The ${} below is a JS template literal, not a shell expansion.
           # shellcheck disable=SC2016
@@ -619,7 +586,7 @@ jobs:
                   console.log(`PORT=${s.port}`); s.stop(true);' >> "$GITHUB_ENV"
           printf 'DATABASE_URL=%s\nREDIS_URL=%s\n' "$DATABASE_URL" "$REDIS_URL" >> "$GITHUB_ENV"
 
-      - uses: zerefukun/dev-config/.github/actions/db-gate@bfac236e894e842a830bb99a8364a8f560a604fe # v0.71.0
+      - uses: zerefukun/dev-config/.github/actions/db-gate@ca8ef9b1672562f1d3ceca2bb5828867e9236a89 # v0.72.0
         with:
           upgrade-gate: ${{ inputs.upgrade-gate }}
           semantic-fixtures: ${{ inputs['semantic-fixtures'] }}
@@ -646,3 +613,10 @@ jobs:
           route-retire: ${{ inputs.route-retire }}
           nightly: ${{ inputs.nightly }}
           fuzz-seed: ${{ inputs['fuzz-seed'] }}
+
+      # Under always(), so a gate that failed still leaves nothing running and
+      # nothing on the runner's disk.
+      - if: always()
+        uses: zerefukun/dev-config/.github/actions/services@ca8ef9b1672562f1d3ceca2bb5828867e9236a89 # v0.72.0
+        with:
+          command: stop

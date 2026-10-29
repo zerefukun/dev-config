@@ -218,11 +218,23 @@ test("this repo's workflows pass the workflow gate", async () => {
 // leaves a failed job's servers on the box; and a stop placed before a step
 // that still reads the servers' URLs.
 describe("this repo's own workflows", () => {
+  test("start no container", async () => {
+    const declared = (await ownJobs()).flatMap(([job, body]) =>
+      ["services", "container"]
+        .filter((key) => body[key] !== undefined)
+        .map((key) => `${job}.${key}`),
+    );
+    expect(declared).toEqual([]);
+  });
+
   test("stop the servers they start under always(), after every step that reads them", async () => {
     const wired = (await ownJobs())
       .map(([job, body]): [string, string] => [job, servicesWiring(body)])
       .filter(([, wiring]) => wiring !== "none");
-    expect(wired.map(([job]) => job)).toContain(".github/workflows/ci.yml: check");
+    expect(wired.map(([job]) => job)).toEqual([
+      ".github/workflows/check.yml: database",
+      ".github/workflows/ci.yml: check",
+    ]);
     for (const [job, wiring] of wired) {
       expect(`${job}: ${wiring}`).toBe(
         `${job}: one each, start is \`services\`, stop always, stop last`,

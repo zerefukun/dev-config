@@ -1467,16 +1467,34 @@ or its jobs queue until one appears** — there is no timeout on a queued job, s
 the symptom is a run that never starts rather than one that fails. dev-config#88
 is where the move is argued.
 
+**The runner provides no container runtime, and needs none.** The database
+job's Postgres and Redis are the runner's own binaries, started by the
+`services` action, so a runner carrying the labels also carries:
+
+- PostgreSQL 16's server binaries — `initdb`, `pg_ctl`, `postgres` — on `PATH`,
+  or in the directory `$PG_BIN` names (Debian's packages put them in
+  `/usr/lib/postgresql/16/bin`, off `PATH`), and PostgreSQL 16's `pg_dump`
+  where the replay and backfill gates find it;
+- `redis-server` 7 on `PATH`;
+- no system instance of either holding a port it would want, and an account
+  that is not root, since `initdb` refuses one.
+
+The action refuses a Postgres that is not 16 and a Redis that is not 7 by
+name: a runner carrying another major would grade every repo against a server
+its production does not run.
+
 Five things follow from the runner being a shared, persistent machine rather
 than a fresh cloud VM, and they are why the workflows look the way they do:
 
-- **Service containers publish on `127.0.0.1` and on a port the daemon picks**
-  (`ports: ["127.0.0.1::5432"]`), never on a fixed one. A bare `5432:5432` binds
-  `0.0.0.0`, and the DNAT rule Docker installs carries no destination match — so
-  the container answers on the box's public address whatever the host firewall
-  says, since `ufw` does not filter the FORWARD path. A fixed port is also
-  single-occupancy, and two runners' jobs overlapping is the ordinary case. Read
-  the assignment back with `${{ job.services.postgres.ports['5432'] }}`.
+- **The servers listen on `127.0.0.1` alone, on ports the kernel picked**,
+  never on a fixed one. Postgres's default `localhost` and Redis's default of
+  every interface would answer from off the box, and a fixed port is
+  single-occupancy where two runners' jobs overlapping is the ordinary case.
+  The action binds port 0, reads the assignment back and hands it to the
+  server; another process taking the port in between is a race the server's
+  own refusal reports, and the action answers it with a fresh port, five times
+  before it fails. The URLs are the action's outputs,
+  `${{ steps.services.outputs.database-url }}` and `redis-url`.
 - **The boot gate's app gets an allocated port too.** `health-url` defaults to
   `http://localhost:${PORT}/api/health`, where `PORT` is a free port the job
   bound and exported before the gate runs. 3000 is the framework default and
@@ -1485,18 +1503,13 @@ than a fresh cloud VM, and they are why the workflows look the way they do:
   `health-url` set explicitly.
 - **The workspace is not discarded when the run ends.** What cleans it is
   `actions/checkout` at the start of the next run.
-- **A service's data directory is a capped tmpfs**
-  (`options: --tmpfs /var/lib/postgresql/data:size=1g`), over each path its
-  image declares a `VOLUME`. Otherwise Docker gives each such path an
-  anonymous volume, and the runner removes the service container after the
-  last step without `-v`, while Docker refuses to remove a volume whose
-  container still exists, so no step can either: every run leaves its volumes
-  on the box's disk. The tmpfs holds the run's data in memory, or swap, up to
-  its cap until the container goes, charged to the container rather than to the
-  runner's slice, so the cap is what stops a runaway run taking the live sites'
-  memory; a run that outgrows it fails on a full disk. `lint-workflows` refuses
-  a service without one, reading the declared paths from the image the
-  workflow pins, so a new major that moves its data directory is caught there.
+- **The servers' data lives under `RUNNER_TEMP` and dies with the job.** The
+  `services` action's `stop`, the job's last step under `if: always()`, takes
+  both servers down and deletes their directory, so a job that failed leaves
+  nothing running and nothing on the disk; a job that failed before `start`
+  ran has nothing to stop, and the step is nothing at all. Durability is off
+  (`fsync`, `full_page_writes`, `synchronous_commit`), since nothing there
+  outlives the job.
 - **A build cache lives on the runner's own disk.** The `build` action keeps
   the paths `build-cache` names in the runner's tool cache (`RUNNER_TOOL_CACHE`),
   one store per runner, so a runner's first run builds cold and the runs after
@@ -1713,12 +1726,10 @@ The matching scripts:
 
 Everything the workflow reaches for is pinned by content, not by a name someone
 else can repoint: actions and the workflow call by commit SHA, the gitleaks
-archive by SHA-256, the Postgres and Redis service images by digest. The tag in
-the trailing comment — or beside the digest, for the images — is the label and
-the hash is the contract; Renovate moves both together. Service images are
-written `postgres:16-alpine@sha256:…` rather than digest-only because that is
-the form its docker datasource maintains, and the manager reads a job's
-`services:` block for exactly this.
+archive by SHA-256. The tag in the trailing comment is the label and the hash
+is the contract; Renovate moves both together. The one thing the workflow runs
+that it does not pin is the runner's Postgres and Redis, which are the
+runner's to install; the `services` action holds their majors instead.
 
 The secret scan downloads the released binary instead of using
 `gitleaks/gitleaks-action`, which since v2 is not open source: it ships under a

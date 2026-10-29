@@ -146,7 +146,7 @@ reclaimed the way a killed run's is. The database the app boots against is the
 fresh one and is never touched by any of this.
 
 Its name is `upgrade_path_<digest>`, the digest being of the project directory
-being replayed. In the shape this ships in — a service container per job — a
+being replayed. In the shape this ships in — a throwaway server per job — a
 fixed name would do; against a server two runs share, deriving it is what keeps
 each run dropping and recreating its own database rather than the one the other
 is midway through migrating. Of the path and not of a clock, so that one

@@ -251,35 +251,29 @@ describe("what a caller may pass, and what the jobs do with it", () => {
     expect(DATABASE_JOB["if"]).toBe("inputs.database == 'postgres'");
   });
 
-  // Every address this job hands out is a port the daemon assigned, never a
-  // number written here. A fixed one is two failures at once on a self-hosted
-  // runner: `5432:5432` binds 0.0.0.0, which Docker's DNAT then answers on the
-  // box's public address, and no two overlapping jobs can both hold it. The
-  // wrong implementation is the readable one — a service published on its own
-  // port and a URL naming it — so the case reads both halves rather than the
-  // service alone, which would pass on a job that published ephemerally and
-  // then built its URL from 5432 anyway.
-  test("the services publish on loopback, on ports nothing else can be holding", () => {
-    const services = record(DATABASE_JOB["services"]);
-    for (const [name, port] of [
-      ["postgres", "5432"],
-      ["redis", "6379"],
-    ]) {
-      const published = record(services[name ?? ""])["ports"];
-      expect(isList(published) ? published : []).toEqual([`127.0.0.1::${port}`]);
-    }
-    // Read off the step that writes them, not the job's `env:` — the `job`
-    // context is out of reach there, and a workflow reading it there is
-    // refused whole before any job starts (v0.55.1 shipped that way).
-    const steps = DATABASE_JOB["steps"];
-    const naming = (isList(steps) ? steps : [])
-      .map((step) => record(step))
-      .find(
-        (step) => typeof step["name"] === "string" && step["name"].startsWith("Allocate a port"),
-      );
+  // Every address this job hands out is one the services action started on
+  // 127.0.0.1 and a kernel-picked port (tests/services.test.ts holds that
+  // half), never a number written here. A fixed one is two failures at once
+  // on a self-hosted runner: something else on the box already holds it, and
+  // no two overlapping jobs can both hold it. The wrong implementations are
+  // the readable one — a URL naming 5432 — and a service container coming
+  // back, which the runner has no runtime to create; so the case reads the URLs
+  // the gate is handed back to the step that started the servers.
+  test("the database and Redis the gate is handed are the ones the job started", () => {
+    expect(DATABASE_JOB["services"]).toBeUndefined();
+    expect(DATABASE_JOB["container"]).toBeUndefined();
+    const steps = (isList(DATABASE_JOB["steps"]) ? DATABASE_JOB["steps"] : []).map((step) =>
+      record(step),
+    );
+    const started = steps.find((step) => step["id"] === "services");
+    expect(String(started?.["uses"])).toStartWith("zerefukun/dev-config/.github/actions/services@");
+    expect(record(started?.["with"])["command"]).toBe("start");
+    const naming = steps.find(
+      (step) => typeof step["name"] === "string" && step["name"].startsWith("Allocate a port"),
+    );
     const environment = record(naming?.["env"]);
-    expect(environment["DATABASE_URL"]).toContain("job.services.postgres.ports['5432']");
-    expect(environment["REDIS_URL"]).toContain("job.services.redis.ports['6379']");
+    expect(environment["DATABASE_URL"]).toBe("${{ steps.services.outputs.database-url }}");
+    expect(environment["REDIS_URL"]).toBe("${{ steps.services.outputs.redis-url }}");
     expect(String(naming?.["run"])).toContain("DATABASE_URL=%s");
   });
 

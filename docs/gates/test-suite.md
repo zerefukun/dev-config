@@ -34,7 +34,7 @@ binary operator.
 ## The unit lane
 
 "Unit lane" here is not a naming convention a repo opts into — it is the job
-this step runs in. `check.yml`'s `static` job declares no service containers, so
+this step runs in. `check.yml`'s `static` job starts no database or cache, so
 the suite it runs has nothing but the runner: no database, no cache, no
 third-party host. Everything that needs one of those is the `database` job,
 which runs [the database gate](db-gate.md) rather than `bun test`. So the lane
@@ -55,8 +55,8 @@ set it — a namespace, which goes away with the process that had it.
 Loopback is inside the seal and is brought up. A test that starts a server and
 calls it on `127.0.0.1` is talking to itself, and refusing that would be
 refusing the in-process integration test rather than the live call. The runner's
-own ports are on the other loopback either way: a service container published on
-`localhost` is not reachable from inside the namespace, which is the same
+own ports are on the other loopback either way: a server the runner started on
+`127.0.0.1` is not reachable from inside the namespace, which is the same
 statement as "this lane has no database".
 
 Two facts about how the seal is taken, both load-bearing if the step is ever
