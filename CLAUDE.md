@@ -236,7 +236,7 @@ a change to a rule usually lands here too.
   nothing about the tool that gate exists to drive. `test-suite.test.ts` is the
   same argument one level down: that gate is a shell script rather than a
   module, so the suite extracts the step out of the shipped `action.yml` and
-  runs it over fixture suites of its own. It needs passwordless sudo, because
+  runs it over fixture suites of its own. It needs the runner's ci-seal helper, because
   what it is grading is a network namespace. `nightly-issue.test.ts` is that
   argument once more, over the one step in this repo whose subject is an effect
   that leaves the system: it extracts the filing step out of its workflow and
@@ -322,7 +322,7 @@ reason and carry their duty the same way — a suite that spawns the real thing.
 `bunfig.toml` names which suite, per file, and says why `dev-server-derive.ts`
 is not with them.
 
-`bun test` needs a Postgres, a Redis, a chromium and passwordless sudo. The
+`bun test` needs a Postgres, a Redis, a chromium and the ci-seal helper. The
 first because the replay gate's property is what two databases end up holding
 and the semantic fixtures' is what a real migration does to a real row; the
 second because a limiter's bucket is shared by two processes and its Redis can

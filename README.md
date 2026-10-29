@@ -1246,11 +1246,13 @@ with:
 No `--with-deps`: it shells out to `sudo apt-get`, which the CI runner's account
 may not run, and the shared libraries it installs are already on the box.
 
-The test-suite gate's own suite needs passwordless `sudo`, which is what taking a
-network namespace costs — a runner has it, and a machine that does not cannot run
-that suite honestly. It is the one gate here whose subject is not a module, so
-its cases extract the step out of the shipped `action.yml` and drive it over test
-suites of their own.
+The test-suite gate's own suite needs the `ci-seal` helper and its sudoers line
+("Where it runs"), which is what taking a network namespace costs — a runner
+has them, and a machine that does not cannot run the sealed cases honestly. The
+cases about the call itself (what the step hands the helper) put a stand-in
+`sudo` on `PATH` and run anywhere. It is the one gate here whose subject is not
+a module, so its cases extract the step out of the shipped `action.yml` and
+drive it over test suites of their own.
 
 The linting is the `lint-workflows` action — actionlint, pinned by version and
 archive checksum exactly like gitleaks, with shellcheck over every `run:` block.
@@ -1496,6 +1498,25 @@ runner provides, since nothing here runs `--with-deps`.
 The action refuses a Postgres that is not 16 and a Redis that is not 7 by
 name: a runner carrying another major would grade every repo against a server
 its production does not run.
+
+**The static job seals the suite through the runner's `ci-seal` helper**, so
+every runner carries it, and grants nothing wider:
+
+- `/usr/local/sbin/ci-seal`, owned by root and writable by nobody else, taking
+  `--path P --tmpdir T -- CMD [ARGS…]`. It runs `CMD` as the user that invoked
+  it, in a fresh network namespace with only `lo` up, with exactly that `PATH`
+  and `TMPDIR`, and passes a termination signal on to it, since the step
+  cancels the suite by signalling the helper.
+- One sudoers line, and no other: the runner's account may run that path
+  without a password — for example
+  `ci ALL=(root) NOPASSWD: /usr/local/sbin/ci-seal`. A grant of `unshare`
+  would hand root to whatever a pull request's suite runs; this one hands it a
+  namespace.
+- A `TMPDIR` in the runner's environment that names an exec-able directory the
+  runner's account owns, wherever `/tmp` is `noexec`: suites build fixtures
+  there and run them, and the step hands it into the seal.
+
+docs/gates/test-suite.md has the step's side of the call.
 
 Five things follow from the runner being a shared, persistent machine rather
 than a fresh cloud VM, and they are why the workflows look the way they do:

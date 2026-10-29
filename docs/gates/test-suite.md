@@ -59,24 +59,33 @@ own ports are on the other loopback either way: a server the runner started on
 `127.0.0.1` is not reachable from inside the namespace, which is the same
 statement as "this lane has no database".
 
-Two facts about how the seal is taken, both load-bearing if the step is ever
-edited:
+The seal is taken by the runner's `ci-seal` helper, and the step's one call to
+it is:
 
-- **It goes through `sudo`.** The unprivileged form (`unshare --map-root-user`)
-  is refused on the runner image, where AppArmor's
-  `kernel.apparmor_restrict_unprivileged_userns` reads `1` and the `uid_map`
-  write is denied. GitHub-hosted Linux runners have passwordless `sudo`; a
-  self-hosted one has to grant it, and the step says so rather than running
-  unsealed.
-- **The suite drops straight back to the invoking user.** Nothing it writes —
-  coverage, snapshots, the junit report — lands root-owned in a workspace the
-  steps after it still have to write to. `PATH` is restated across that hop
-  because `sudo` takes it from `secure_path` whatever the environment says, and
-  the Bun the runner installed is not on it. `TMPDIR` does not survive either,
-  with or without `--preserve-env`: `sudo` drops it unconditionally. On a
-  GitHub-hosted runner nothing sets one, so the suite gets `/tmp` as it always
-  would; a self-hosted runner that points `TMPDIR` somewhere deliberate — a
-  larger disk, a tmpfs — will not see it inside the seal.
+```sh
+sudo --non-interactive /usr/local/sbin/ci-seal --path "$PATH" --tmpdir "${TMPDIR:-/tmp}" -- CMD ARGS…
+```
+
+Three facts about it, all load-bearing if the step is ever edited:
+
+- **Only the helper is root.** Creating a network namespace needs privilege:
+  the unprivileged form (`unshare --map-root-user`) is refused where AppArmor's
+  `kernel.apparmor_restrict_unprivileged_userns` reads `1`. The step used to
+  take it as `sudo unshare --net`, which made the runner grant `unshare` with
+  any command after it — root for whatever a pull request's suite runs. The
+  helper is root-owned and does one thing, so the grant is that one path. A
+  runner without it fails the step by name rather than running unsealed.
+- **The suite runs as the invoking user.** The helper hands the command back
+  to the user that called it, so nothing the suite writes — coverage,
+  snapshots, the junit report — lands root-owned in a workspace the steps after
+  it still have to write to.
+- **`PATH` and `TMPDIR` are handed across, and nothing else is promised.**
+  `sudo` resets the environment, so the step restates both: `PATH` because the
+  Bun the runner installed is not on `secure_path`, `TMPDIR` because a runner
+  that points it somewhere deliberate — an exec-able directory beside a
+  `noexec` `/tmp`, a larger disk — means every process to see it, the suite's
+  included. Unset, the step hands `/tmp`, which is what a process reads an
+  unset `TMPDIR` as.
 
 ## What the seal costs
 
@@ -137,9 +146,8 @@ long property is a timeout rather than a longer search — and the job's own
 the suite.
 
 They go to the suite through `env` rather than exported, so the assignment
-survives the two `sudo` hops the seal takes: `--preserve-env` is a request
-sudoers may narrow, and this is the restatement `PATH` already makes beside it
-for the same reason.
+survives the seal, which promises the command the `PATH` and `TMPDIR` it is
+handed and nothing else of the step's environment.
 
 ## The coverage floor
 
@@ -196,4 +204,5 @@ signalling nothing else in the tree. A suite left in the foreground therefore
 outlives the shell that started it: still running, inside a namespace nothing
 on the box can see into, on a machine the runner is about to reclaim. So the
 suite runs as a job this step owns and the signal is forwarded to it; `sudo`
-passes it down, and the tree goes with it.
+passes it down, the helper hands it on to the command it runs, and the tree
+goes with it.

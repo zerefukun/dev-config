@@ -149,23 +149,19 @@ runs:
           esac
           echo "::notice::the suite reaches a real network: $reason"
         else
-          if ! sudo --non-interactive true 2>/dev/null; then
-            echo "::error::the suite is run sealed in a network namespace, which needs passwordless sudo on the runner — GitHub-hosted Linux runners have it, a self-hosted one has to grant it, and a suite that genuinely reaches a network says so in the test-network input instead"
+          # The runner's ci-seal helper, the one thing here that is root: it
+          # runs the command back as this user, in a fresh network namespace
+          # with only `lo` up, with exactly the PATH and TMPDIR it is handed.
+          # Both are restated because sudo resets the environment, and an
+          # unset TMPDIR is /tmp, which is what a process reads it as. The
+          # runner's side of it — the helper and its sudoers line — is
+          # README's "Where it runs".
+          seal=(sudo --non-interactive /usr/local/sbin/ci-seal
+            --path "$PATH" --tmpdir "${TMPDIR:-/tmp}" --)
+          if ! "${seal[@]}" true 2>/dev/null; then
+            echo "::error::the suite is run sealed in a network namespace, which needs the runner's /usr/local/sbin/ci-seal helper and a sudoers line letting this user run it without a password (README, \"Where it runs\") — and a suite that genuinely reaches a network says so in the test-network input instead"
             exit 1
           fi
-          # Root twice over, and neither hop is optional. Creating the namespace
-          # needs it: the unprivileged form is refused on the runner image, where
-          # kernel.apparmor_restrict_unprivileged_userns reads 1 and the uid_map
-          # write is denied. Dropping straight back out of it keeps the suite's
-          # own files out of root's ownership, and PATH is restated across that
-          # hop because sudo takes it from secure_path whatever the environment
-          # says. `lo` exists in a fresh namespace and is created down: a server
-          # a test starts on 127.0.0.1 is not a network call, and the runner's
-          # own ports are on the other loopback whether this is up or not.
-          seal=(sudo --non-interactive --preserve-env unshare --net --
-            bash -c 'ip link set lo up && exec "$@"' sealed
-            sudo --non-interactive --preserve-env --user "$(id -un)" --
-            env "PATH=$PATH")
         fi
 
         # As a job this shell owns, rather than in the foreground. The runner
@@ -175,11 +171,10 @@ runs:
         # left running on a machine about to be reclaimed — and inside a
         # namespace where nothing else can see it. Forwarding is the whole fix:
         # sudo passes the signal down, and the tree goes with it.
-        # Through `env` rather than exported, so the budget survives the two
-        # sudo hops the seal takes: `--preserve-env` is a request sudoers may
-        # narrow, and the assignment right here is the same restatement `PATH`
-        # already makes for the same reason. Empty off a nightly, where `env`
-        # with no assignments is the command itself.
+        # Through `env` rather than exported, so the budget survives the seal,
+        # which promises the command the PATH and TMPDIR it is handed and
+        # nothing else of this environment. Empty off a nightly, where `env` with no assignments is
+        # the command itself.
         "${seal[@]}" env "${budget[@]}" "${suite[@]}" &
         running=$!
         trap 'kill -TERM "$running" 2>/dev/null || true' INT TERM

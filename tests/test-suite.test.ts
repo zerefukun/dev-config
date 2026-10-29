@@ -1,5 +1,5 @@
 import { describe, expect, setDefaultTimeout, test } from "bun:test";
-import { stat } from "node:fs/promises";
+import { chmod, mkdir, stat } from "node:fs/promises";
 import { dirname, join } from "node:path";
 
 import { record } from "../.github/actions/_lib/gate.ts";
@@ -12,8 +12,8 @@ import { materialise, type Tree } from "./tree.ts";
  * grade is whether the namespace the shipped YAML names actually holds, which
  * is the whole of what this gate claims.
  */
-// Every case here is a process tree: bash, two sudos, an unshare and a `bun
-// test` inside all of it. With the machine to itself the whole suite is under
+// Every case here is a process tree: bash, sudo, the runner's ci-seal helper and
+// a `bun test` inside all of it. With the machine to itself the whole suite is under
 // three seconds, and inside a full run — behind the browser, the mutation lane
 // and three suites that drive a real Postgres — a single spawn has been seen to
 // pass five, which the default reports as a fault in the seal. The same 30s the
@@ -40,11 +40,11 @@ interface Run {
   readonly status: number;
   readonly output: string;
   /**
-   * Who owns the report the run wrote. The suite is taken into a namespace as
-   * root and handed straight back to the invoking user, and that second hop is
-   * one line: without it every file the run touches — coverage, snapshots, this
-   * report — lands root-owned in a workspace the steps after it still have to
-   * write to, and the suite is green either way.
+   * Who owns the report the run wrote. The seal is taken through root and the
+   * suite has to come back out as the invoking user: otherwise every file the
+   * run touches — coverage, snapshots, this report — lands root-owned in a
+   * workspace the steps after it still have to write to, and the suite is
+   * green either way.
    */
   readonly reportUid: number | undefined;
   /** The junit the run wrote, or nothing when it never got that far. */
@@ -65,14 +65,27 @@ async function ownerOf(path: string): Promise<number | undefined> {
  * at the fixture — the junit report the step reads is per-run, and two cases
  * sharing one would grade each other's.
  */
-async function ran(tree: Tree, network = "", bun = "", nightly = "false"): Promise<Run> {
+async function ran(
+  tree: Tree,
+  network = "",
+  bun = "",
+  nightly = "false",
+  around: (root: string) => Promise<Record<string, string>> = () => Promise.resolve({}),
+): Promise<Run> {
   const root = await materialise(tree);
   // The step calls `bun` by name, so which one it gets is a fact about PATH —
   // which is how a case runs the shipped shell under a bun other than this one.
   const path = bun === "" ? process.env["PATH"] : `${dirname(bun)}:${process.env["PATH"] ?? ""}`;
   const proc = Bun.spawn(["bash", "-c", STEP], {
     cwd: root,
-    env: { ...process.env, PATH: path, RUNNER_TEMP: root, TEST_NETWORK: network, NIGHTLY: nightly },
+    env: {
+      ...process.env,
+      PATH: path,
+      RUNNER_TEMP: root,
+      TEST_NETWORK: network,
+      NIGHTLY: nightly,
+      ...(await around(root)),
+    },
     stdout: "pipe",
     stderr: "pipe",
   });
@@ -294,6 +307,106 @@ test("unreached", () => {
 // every test green. Graded through the report the run wrote rather than the
 // console: what makes the first case the coverage floor and not some other
 // failure is that the run's own record says nothing in it failed.
+/**
+ * A `sudo` of the suite's own, first on PATH, standing in for the runner's
+ * sudo and its ci-seal helper: the helper is the runner's, so the call the
+ * step makes to it is graded here and the namespace it takes is graded by the
+ * sealed cases above, on a runner that has it. It logs each call, one argument
+ * a line, refuses any call that is not the helper's documented shape, and runs
+ * the command the way the helper promises to — with that PATH and TMPDIR and
+ * nothing else — or fails every call when `refuse` is set.
+ */
+function standIn(refuse = false): (root: string) => Promise<Record<string, string>> {
+  return async (root) => {
+    const bin = join(root, "stand-in");
+    await mkdir(bin);
+    const script = [
+      "#!/usr/bin/env bash",
+      `printf '%s\\n' "$@" '--end--' >> "${join(root, "seal.calls")}"`,
+      refuse ? "exit 1" : "",
+      '[ "$1 $2 $3" = "--non-interactive /usr/local/sbin/ci-seal --path" ] || exit 64',
+      '[ "$5 $7" = "--tmpdir --" ] || exit 64',
+      "path=$4 tmp=$6; shift 7",
+      'exec env -i PATH="$path" TMPDIR="$tmp" "$@"',
+      "",
+    ].join("\n");
+    await Bun.write(join(bin, "sudo"), script);
+    await chmod(join(bin, "sudo"), 0o755);
+    const tmp = join(root, "own-tmp");
+    await mkdir(tmp);
+    return { PATH: `${bin}:${process.env["PATH"] ?? ""}`, TMPDIR: tmp };
+  };
+}
+
+/** Each call the stand-in took, as its argument list. */
+async function calls(root: string): Promise<string[][]> {
+  const log = await Bun.file(join(root, "seal.calls")).text();
+  return log
+    .split("--end--\n")
+    .filter((call) => call !== "")
+    .map((call) => call.split("\n").filter((word) => word !== ""));
+}
+
+const READS_TMPDIR: Tree = {
+  "tmpdir.test.ts": `import { expect, test } from "bun:test";
+
+test("reads its TMPDIR", () => {
+  console.log(\`tmpdir=\${process.env.TMPDIR ?? "(unset)"}\`);
+  expect(1).toBe(1);
+});
+`,
+};
+
+// The wrong implementations: the old `sudo unshare --net …` shape, which makes
+// a runner grant root to whatever follows it; a call that drops TMPDIR, so a
+// runner whose /tmp is noexec has every suite that runs a fixture it wrote
+// fail inside the seal; a probe that asks sudo for something other than the
+// helper, which passes on a runner the run itself then fails on; and an unset
+// TMPDIR handed as an empty string, which a process reads as no directory.
+describe("the call the step makes to the seal", () => {
+  test("is the helper, handed this PATH and TMPDIR, and the suite sees that TMPDIR", async () => {
+    let root = "";
+    let handed: Record<string, string> = {};
+    const { status, output } = await ran(READS_TMPDIR, "", "", "false", async (at) => {
+      root = at;
+      handed = await standIn()(at);
+      return handed;
+    });
+    expect(status).toBe(0);
+    expect(output).toContain(`tmpdir=${handed["TMPDIR"] ?? ""}`);
+    const [probe, run] = await calls(root);
+    const head = [
+      "--non-interactive",
+      "/usr/local/sbin/ci-seal",
+      "--path",
+      handed["PATH"] ?? "",
+      "--tmpdir",
+      handed["TMPDIR"] ?? "",
+      "--",
+    ];
+    expect(probe).toEqual([...head, "true"]);
+    expect(run?.slice(0, head.length + 3)).toEqual([...head, "env", "bun", "test"]);
+  });
+
+  test("hands an unset or empty TMPDIR as /tmp, which is what a process reads it as", async () => {
+    let root = "";
+    const { status } = await ran(READS_TMPDIR, "", "", "false", async (at) => {
+      root = at;
+      const handed = await standIn()(at);
+      return { PATH: handed["PATH"] ?? "", TMPDIR: "" };
+    });
+    expect(status).toBe(0);
+    const [probe] = await calls(root);
+    expect(probe?.slice(4, 6)).toEqual(["--tmpdir", "/tmp"]);
+  });
+
+  test("fails the step by name on a runner without the helper", async () => {
+    const { status, output } = await ran(READS_TMPDIR, "", "", "false", standIn(true));
+    expect(output).toContain("needs the runner's /usr/local/sbin/ci-seal helper");
+    expect(status).not.toBe(0);
+  });
+});
+
 describe("the budget a nightly gets", () => {
   /** A suite that reports what the run gave it, which is the whole of what the budget is. */
   const BUDGETED: Tree = {
@@ -307,11 +420,11 @@ test("reads its budget", () => {
 `,
   };
 
-  // The variables have to cross the two sudo hops the seal takes, and
-  // `--preserve-env` is a request sudoers may narrow: the whole reason they are
-  // written into the `env` beside the restated PATH rather than exported. A run
-  // where they were dropped is a nightly that searched exactly as far as an
-  // ordinary run and said it had searched fifty times further.
+  // The variables have to cross the seal, which promises the command its PATH
+  // and TMPDIR and nothing else: the whole reason they are written into the
+  // `env` the sealed command runs rather than exported. A run where they were
+  // dropped is a nightly that searched exactly as far as an ordinary run and
+  // said it had searched fifty times further.
   test("reaches the suite through the seal", async () => {
     const { status, output } = await ran(BUDGETED, "", "", "true");
     expect(status).toBe(0);
