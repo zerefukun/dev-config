@@ -139,7 +139,7 @@ to them — an empty one turns the base off wherever it sits. Neither is followe
 because a per-directory difference already has a home the gate can read:
 `overrides` in the root config. A base is the file at the path the package
 installs it to, written as README writes it —
-`./node_modules/@gokayo43/dev-config/oxlint.base.json` — and a path that merely
+`./node_modules/@zerefukun/dev-config/oxlint.base.json` — and a path that merely
 ends the same way is a copy laid out to look like it. The `config-lineage`
 exemption waives _where_ a config inherits from and never how many places it
 inherits from, so under it a base is recognised by its file name instead. One
@@ -149,7 +149,7 @@ Tailwind repo reads the design-system base.
 
 **A Tailwind repo reads the design-system base.** A repo whose tree has
 `tailwindcss` in any manifest, under any dependency field, has to name
-`./node_modules/@gokayo43/dev-config/design-system.base.json` in its root
+`./node_modules/@zerefukun/dev-config/design-system.base.json` in its root
 `.oxlintrc.json`; the diagnostic names the manifests that declare Tailwind and
 what to add. That package is the one every such repo declares whichever plugin
 wires Tailwind into its build — `@tailwindcss/vite` among them — and a name
@@ -275,7 +275,7 @@ of.
 | `scripts/restore-drill.sh` exists and is executable                      | the repo owns a database, and `data-jobs-external` is empty | a backup nobody has restored is a backup nobody has                                                                                                             |
 | a timer/service pair that runs each of them                              | the repo owns a database, and `data-jobs-external` is empty | a script nothing runs on a schedule is one that ran the day it was written (below)                                                                              |
 | `@playwright/test` among what the workspace declares                     | the repo ships a browser surface: `react-dom` or `astro`    | a page nobody opens in CI is one that breaks in front of a user                                                                                                 |
-| a spec written with `@gokayo43/dev-config/invariant-sweep`               | the repo ships a browser surface: `react-dom` or `astro`    | a spec on Playwright's own `test` passes without noticing a console error, an uncaught error or a page scrolling sideways                                       |
+| a spec written with `@zerefukun/dev-config/invariant-sweep`              | the repo ships a browser surface: `react-dom` or `astro`    | a spec on Playwright's own `test` passes without noticing a console error, an uncaught error or a page scrolling sideways                                       |
 | a `ci.yml` step that runs `playwright test`                              | the repo ships a browser surface: `react-dom` or `astro`    | a suite CI never runs is one that ran the day it was written                                                                                                    |
 
 Only crash reporting is owed by every live repo. The rest is scoped to what the
@@ -377,7 +377,7 @@ target ships.
 A repo that has one owes three separate things, because each is a different file
 to fix. The runner has to be **declared** — `devDependencies` or `dependencies`,
 in any manifest in the workspace. At least one `*.spec.ts` or `*.spec.tsx` has to
-import `@gokayo43/dev-config/invariant-sweep`, which is what makes every page
+import `@zerefukun/dev-config/invariant-sweep`, which is what makes every page
 its specs visit checked for console errors, uncaught errors and sideways scroll;
 a spec on Playwright's own `test` passes while noticing none of it, and the base
 config's `no-restricted-imports` refuses that import for the same reason. And

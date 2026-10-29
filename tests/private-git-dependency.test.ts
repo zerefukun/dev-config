@@ -38,7 +38,7 @@ const JOBS = record(DOCUMENT["jobs"]);
 const SECRETS = record(record(record(DOCUMENT["on"])["workflow_call"])["secrets"]);
 
 /** How `check.yml` names this repo's own actions — by full path, never `./`. */
-const INSTALL_ACTION = "gokayo43/dev-config/.github/actions/install@";
+const INSTALL_ACTION = "zerefukun/dev-config/.github/actions/install@";
 
 /** One string field of a mapping, or the empty string — a key absent reads as unset. */
 function textAt(held: ConfigObject, key: string): string {

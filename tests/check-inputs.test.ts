@@ -369,7 +369,7 @@ describe("what the build steps are handed", () => {
     .flatMap((job) => (isList(job["steps"]) ? [...job["steps"]] : []))
     .map((step) => record(step))
     .filter((step) =>
-      textAt(step, "uses").startsWith("gokayo43/dev-config/.github/actions/build@"),
+      textAt(step, "uses").startsWith("zerefukun/dev-config/.github/actions/build@"),
     );
 
   // A golden, for the reason the database job's are: what the step passes is an

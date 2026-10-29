@@ -11,7 +11,7 @@
   "vulnerabilityAlerts": { "enabled": true },
   "osvVulnerabilityAlerts": true,
   "prBodyNotes": [
-    "{{#if isVulnerabilityAlert}}This security fix skips the release-age wait, so `bun install` may refuse the fixed version as too new; [Vulnerability fixes](https://github.com/gokayo43/dev-config#vulnerability-fixes) has the steps that land it.{{/if}}"
+    "{{#if isVulnerabilityAlert}}This security fix skips the release-age wait, so `bun install` may refuse the fixed version as too new; [Vulnerability fixes](https://github.com/zerefukun/dev-config#vulnerability-fixes) has the steps that land it.{{/if}}"
   ],
   "internalChecksFilter": "strict",
   "rangeStrategy": "pin",

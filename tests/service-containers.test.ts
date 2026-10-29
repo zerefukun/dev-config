@@ -17,7 +17,7 @@ const REDIS_7 =
   "redis:7-alpine@sha256:ff02b58f971e7d7d156a1267e283fcbbeee91773b6aa36c49dac28ecfe28eadf";
 const ALPINE = "alpine:3@sha256:28bd5fe8b56d1bd048e5babf5b10710ebe0bae67db86916198a6eec434943f8b";
 /** Pinned well enough for the pin rule, and held by no registry this box can read. */
-const UNREADABLE = `ghcr.io/gokayo43/private-db@sha256:${"0".repeat(64)}`;
+const UNREADABLE = `ghcr.io/zerefukun/private-db@sha256:${"0".repeat(64)}`;
 
 /**
  * `docker image inspect --format '{{json .Config.Volumes}}'` for each image, by

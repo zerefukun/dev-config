@@ -45,11 +45,11 @@ describe("the release-age window", () => {
 
   test("every exclusion that names no package is refused by name", async () => {
     const excludes =
-      'minimumReleaseAgeExcludes = ["@gokayo43/*", "typescript", "@types/", "@types"]\n';
+      'minimumReleaseAgeExcludes = ["@zerefukun/*", "typescript", "@types/", "@types"]\n';
     expect(
       await contract(withBunfig({ window: `minimumReleaseAge = 259200\n${excludes}` })),
     ).toEqual([
-      containing('lists "@gokayo43/*", which exempts nothing'),
+      containing('lists "@zerefukun/*", which exempts nothing'),
       containing('lists "@types/", which exempts nothing'),
       containing('lists "@types", which exempts nothing'),
     ]);

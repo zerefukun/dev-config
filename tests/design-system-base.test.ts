@@ -19,8 +19,8 @@ const REPO = dirname(import.meta.dir);
  */
 const OXLINTRC = `{
   "extends": [
-    "./node_modules/@gokayo43/dev-config/oxlint.base.json",
-    "./node_modules/@gokayo43/dev-config/design-system.base.json"
+    "./node_modules/@zerefukun/dev-config/oxlint.base.json",
+    "./node_modules/@zerefukun/dev-config/design-system.base.json"
   ],
   "options": { "typeAware": false },
   "ignorePatterns": ["node_modules/**"],
@@ -141,7 +141,7 @@ const SHIPPED = ["package.json", "oxlint.base.json", "design-system.base.json", 
 
 /**
  * The tree installed the way a consuming repo has it: the shipped bases as
- * `@gokayo43/dev-config`, and the plugin and Tailwind beside it in the repo's
+ * `@zerefukun/dev-config`, and the plugin and Tailwind beside it in the repo's
  * own `node_modules` — the plugin because the base names it by a bare
  * specifier, Tailwind because `no-unknown-classes` asks the project's own copy
  * which classes exist. The package is linked file by file rather than as this
@@ -151,7 +151,7 @@ const SHIPPED = ["package.json", "oxlint.base.json", "design-system.base.json", 
 async function linted(tree: Tree): Promise<ReadonlyMap<string, readonly Diagnostic[]>> {
   const root = await materialise(tree);
   const modules = join(root, "node_modules");
-  const devConfig = join(modules, "@gokayo43", "dev-config");
+  const devConfig = join(modules, "@zerefukun", "dev-config");
   await mkdir(devConfig, { recursive: true });
   await mkdir(join(modules, "@shadcn"), { recursive: true });
   for (const name of SHIPPED) await symlink(join(REPO, name), join(devConfig, name));

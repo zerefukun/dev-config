@@ -16,8 +16,8 @@ import { materialise, type Tree, without } from "./tree.ts";
 
 /** The two shared bases as a consuming repo names them. */
 const BASES = {
-  oxlint: "./node_modules/@gokayo43/dev-config/oxlint.base.json",
-  designSystem: "./node_modules/@gokayo43/dev-config/design-system.base.json",
+  oxlint: "./node_modules/@zerefukun/dev-config/oxlint.base.json",
+  designSystem: "./node_modules/@zerefukun/dev-config/design-system.base.json",
 };
 
 // The word the caller's workflow writes, before any rule reads it. The action
@@ -846,7 +846,7 @@ describe("a repo that builds its pages with Tailwind", () => {
     "tailwindcss in %s %s without the base is refused, naming the manifest and what to add",
     async (path, field) => {
       expect(await contract(tailwindAt(path, field, [BASES.oxlint]))).toEqual([
-        `${path} depends on tailwindcss — add ./node_modules/@gokayo43/dev-config/design-system.base.json to extends beside oxlint.base.json, and @shadcn/lint to devDependencies, so a page using a raw colour, an arbitrary value or a restyled shared component fails lint`,
+        `${path} depends on tailwindcss — add ./node_modules/@zerefukun/dev-config/design-system.base.json to extends beside oxlint.base.json, and @shadcn/lint to devDependencies, so a page using a raw colour, an arbitrary value or a restyled shared component fails lint`,
       ]);
     },
   );
@@ -897,19 +897,21 @@ describe("a repo that builds its pages with Tailwind", () => {
   // A path that merely ends in the package's is a copy laid out to look like
   // it: two empty files there passed as both bases.
   test("a copy of both bases under a look-alike path is refused", async () => {
-    const vendor = "./vendor/@gokayo43/dev-config";
+    const vendor = "./vendor/@zerefukun/dev-config";
     expect(
       await contract({
         ...tailwindAt("package.json", "devDependencies", [
           `${vendor}/oxlint.base.json`,
           `${vendor}/design-system.base.json`,
         ]),
-        "vendor/@gokayo43/dev-config/oxlint.base.json": "{}",
-        "vendor/@gokayo43/dev-config/design-system.base.json": "{}",
+        "vendor/@zerefukun/dev-config/oxlint.base.json": "{}",
+        "vendor/@zerefukun/dev-config/design-system.base.json": "{}",
       }),
     ).toEqual([
       containing("extends must name the shared bases and nothing else"),
-      containing(".oxlintrc.json must extend ./node_modules/@gokayo43/dev-config/oxlint.base.json"),
+      containing(
+        ".oxlintrc.json must extend ./node_modules/@zerefukun/dev-config/oxlint.base.json",
+      ),
       containing("package.json depends on tailwindcss"),
     ]);
   });

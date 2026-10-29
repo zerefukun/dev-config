@@ -407,8 +407,8 @@ const CASES = [
  * question's failure.
  */
 const INSTALLED = `import { expect } from "@playwright/test";
-import { test } from "@gokayo43/dev-config/invariant-sweep";
-import { ENDPOINT } from "@gokayo43/dev-config/route-log";
+import { test } from "@zerefukun/dev-config/invariant-sweep";
+import { ENDPOINT } from "@zerefukun/dev-config/route-log";
 
 test("a consumer's spec runs", async ({ page }) => {
   // The runner is the whole question: a bun wearing node's name on PATH — the

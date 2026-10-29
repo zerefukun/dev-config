@@ -38,7 +38,7 @@ const REPO = dirname(import.meta.dir);
  * `fast-check` out of the tree it is pointed at, and what a consumer has is
  * exactly this — the version this lockfile pins. `property.ts` itself is
  * reached by path, since a fixture is not an install of this package and
- * `@gokayo43/dev-config` resolves nowhere from inside one.
+ * `@zerefukun/dev-config` resolves nowhere from inside one.
  */
 const NODE_MODULES = join(REPO, "node_modules");
 

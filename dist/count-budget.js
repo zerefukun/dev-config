@@ -931,7 +931,7 @@ async function verdict(measured, running, path, where) {
 * object of `Counts` by phase.
 *
 * ```ts
-* import { test } from "@gokayo43/dev-config/count-budget";
+* import { test } from "@zerefukun/dev-config/count-budget";
 * ```
 */
 const test = test$1.extend({

@@ -1,12 +1,12 @@
 # Generated interleavings
 
-`@gokayo43/dev-config/interleaving` lets a property test in an Effect codebase
+`@zerefukun/dev-config/interleaving` lets a property test in an Effect codebase
 generate the order in which overlapping fibers' steps run. A race nobody wrote
 a case for is found by the search, and the seed fast-check prints replays it.
 
 ```ts
-import { interleavingsOf, simulate } from "@gokayo43/dev-config/interleaving";
-import { check } from "@gokayo43/dev-config/property";
+import { interleavingsOf, simulate } from "@zerefukun/dev-config/interleaving";
+import { check } from "@zerefukun/dev-config/property";
 import { expect, test } from "bun:test";
 import { Effect, Exit, Fiber } from "effect";
 import { property } from "fast-check";

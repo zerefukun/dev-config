@@ -1,6 +1,6 @@
 # The count budget
 
-`@gokayo43/dev-config/count-budget` exports `test`, which is
+`@zerefukun/dev-config/count-budget` exports `test`, which is
 [the invariant sweep's](invariant-sweep.md) own `test` with a `budget` fixture
 beside it. A test that asks for `budget` marks the phases of a job, the load and
 then each interaction, and every phase's counts are held exactly to the ceilings
@@ -8,7 +8,7 @@ committed beside the spec. A spec that imports this `test` is swept as well,
 since it is the sweep's `test` extended.
 
 ```ts
-import { test } from "@gokayo43/dev-config/count-budget";
+import { test } from "@zerefukun/dev-config/count-budget";
 
 test.describe.configure({ retries: 0 });
 

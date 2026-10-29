@@ -30,7 +30,7 @@ import type { Tree } from "./tree.ts";
 const SPEC = "e2e/home.spec.ts";
 
 /** A spec written through the sweep, which is the whole of what makes its pages swept. */
-const SWEPT = `import { test } from "@gokayo43/dev-config/invariant-sweep";
+const SWEPT = `import { test } from "@zerefukun/dev-config/invariant-sweep";
 
 test("the home page loads", async ({ page }) => {
   await page.goto("/");
@@ -38,13 +38,13 @@ test("the home page loads", async ({ page }) => {
 `;
 
 /** The same spec against Playwright's own `test`: a suite that exists and sweeps nothing. */
-const UNSWEPT = SWEPT.replace('"@gokayo43/dev-config/invariant-sweep"', '"@playwright/test"');
+const UNSWEPT = SWEPT.replace('"@zerefukun/dev-config/invariant-sweep"', '"@playwright/test"');
 
 /** That spec with the specifier present as prose, which is a spec nobody has moved yet. */
-const PROMISED = `// TODO: move this to @gokayo43/dev-config/invariant-sweep\n${UNSWEPT}`;
+const PROMISED = `// TODO: move this to @zerefukun/dev-config/invariant-sweep\n${UNSWEPT}`;
 
 /** And present as a value, which is the other way the bytes carry it and the imports do not. */
-const QUOTED = `${UNSWEPT}export const swept = "@gokayo43/dev-config/invariant-sweep";\n`;
+const QUOTED = `${UNSWEPT}export const swept = "@zerefukun/dev-config/invariant-sweep";\n`;
 
 /**
  * The source spelling: a specifier this package does not export, and one node
@@ -201,7 +201,7 @@ describe("a spec is swept by importing the sweep", () => {
     ["single quotes, which is what a formatter may write", SWEPT.replaceAll('"', "'")],
     [
       "a dynamic import",
-      'const { test } = await import("@gokayo43/dev-config/invariant-sweep");\nexport const used = test;\n',
+      'const { test } = await import("@zerefukun/dev-config/invariant-sweep");\nexport const used = test;\n',
     ],
   ])("and is satisfied by %s", async (_what, source) => {
     expect(await pageSite({ ...SWEPT_SUITE, [SPEC]: source })).toEqual([]);

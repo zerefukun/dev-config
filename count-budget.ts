@@ -594,7 +594,7 @@ async function verdict(
  * object of `Counts` by phase.
  *
  * ```ts
- * import { test } from "@gokayo43/dev-config/count-budget";
+ * import { test } from "@zerefukun/dev-config/count-budget";
  * ```
  */
 export const test: TestType<

@@ -1,7 +1,7 @@
 name: Nightly issue
 
 # What a red nightly leaves behind, held in one place and called by reference:
-#   jobs.nightly.uses: gokayo43/dev-config/.github/workflows/nightly-issue.yml@<sha>
+#   jobs.nightly.uses: zerefukun/dev-config/.github/workflows/nightly-issue.yml@<sha>
 #
 # A run nobody is waiting on is a run nobody reads, so a red one at 02:00 is a
 # fact about the repo until somebody notices it. This files it where that repo's

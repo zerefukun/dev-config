@@ -600,7 +600,7 @@ export async function install(root: string): Promise<void> {
 
   // The package's own scope is a real directory holding links to whatever the
   // install already has under it, rather than a link to the scope itself: the
-  // day a second `@gokayo43/*` package is installed here, a link would put the
+  // day a second `@zerefukun/*` package is installed here, a link would put the
   // copy below inside this repo's own `node_modules`.
   await mkdir(join(modules, scope), { recursive: true });
   const link = async (entry: string): Promise<void> => {

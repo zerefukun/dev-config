@@ -337,7 +337,7 @@ for (let each = 0; each < 16; each++) {
 
 /** A spec exactly as a consumer writes one, by the package's own specifier, under the runner Playwright brings. */
 const INSTALLED = `import { expect } from "@playwright/test";
-import { test } from "@gokayo43/dev-config/count-budget";
+import { test } from "@zerefukun/dev-config/count-budget";
 
 test("a consumer's spec runs", async ({ page, budget }) => {
   expect(process.versions.bun).toBeUndefined();

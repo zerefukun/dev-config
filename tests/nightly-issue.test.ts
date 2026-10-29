@@ -42,7 +42,7 @@ const SCRIPT = String(STEP["run"]);
 /** The title as the shipped step spells it, which is the whole of the issue's identity. */
 const TITLE = String(record(STEP["env"])["TITLE"]);
 
-const RUN_URL = "https://github.com/gokayo43/fixture/actions/runs/4242";
+const RUN_URL = "https://github.com/zerefukun/fixture/actions/runs/4242";
 
 /**
  * A `gh` that answers from a file and remembers what it was asked. Reads go
@@ -138,7 +138,7 @@ async function ran({
     gh: GH,
     "issues.json": JSON.stringify(issues),
     "jobs.json": JSON.stringify({ jobs }),
-    "wrote.json": JSON.stringify({ html_url: "https://github.com/gokayo43/fixture/issues/1" }),
+    "wrote.json": JSON.stringify({ html_url: "https://github.com/zerefukun/fixture/issues/1" }),
     ...(fuzz === undefined
       ? {}
       : {
@@ -160,7 +160,7 @@ async function ran({
       JOBS_JSON: join(root, "jobs.json"),
       WROTE_JSON: join(root, "wrote.json"),
       GITHUB_SERVER_URL: "https://github.com",
-      GITHUB_REPOSITORY: "gokayo43/fixture",
+      GITHUB_REPOSITORY: "zerefukun/fixture",
       GITHUB_RUN_ID: "4242",
       GH_TOKEN: "not-a-token",
       REFUSES: refuses.join(" "),
@@ -196,7 +196,7 @@ describe("a nightly that is red", () => {
   test("files one issue, under the title that is its identity", async () => {
     const { status, calls, log } = await ran({ result: "failure" });
     expect(status).toBe(0);
-    expect(wrote(calls)).toEqual(["-X POST /repos/gokayo43/fixture/issues"]);
+    expect(wrote(calls)).toEqual(["-X POST /repos/zerefukun/fixture/issues"]);
     expect(log).toContain(`"title": "${TITLE}"`);
   });
 
@@ -241,7 +241,7 @@ describe("a nightly that is red", () => {
   // it, which is the same as reporting nothing.
   test("comments on the issue already open rather than filing another", async () => {
     const { calls } = await ran({ result: "failure", issues: [issue(7)] });
-    expect(wrote(calls)).toEqual(["-X POST /repos/gokayo43/fixture/issues/7/comments"]);
+    expect(wrote(calls)).toEqual(["-X POST /repos/zerefukun/fixture/issues/7/comments"]);
   });
 
   // The one window search-then-act cannot close is between the search and the
@@ -253,9 +253,9 @@ describe("a nightly that is red", () => {
       issues: [issue(9), issue(7)],
     });
     expect(wrote(calls)).toEqual([
-      "-X POST /repos/gokayo43/fixture/issues/7/comments",
-      "-X POST /repos/gokayo43/fixture/issues/9/comments",
-      "-X PATCH /repos/gokayo43/fixture/issues/9 -f state=closed -f state_reason=completed",
+      "-X POST /repos/zerefukun/fixture/issues/7/comments",
+      "-X POST /repos/zerefukun/fixture/issues/9/comments",
+      "-X PATCH /repos/zerefukun/fixture/issues/9 -f state=closed -f state_reason=completed",
     ]);
     expect(log).toContain("duplicate of #7");
   });
@@ -265,7 +265,7 @@ describe("a nightly that is red", () => {
   // red one.
   test("whichever job inside the check was the red one", async () => {
     const { calls } = await ran({ result: "failure" });
-    expect(wrote(calls)).toEqual(["-X POST /repos/gokayo43/fixture/issues"]);
+    expect(wrote(calls)).toEqual(["-X POST /repos/zerefukun/fixture/issues"]);
   });
 });
 
@@ -273,8 +273,8 @@ describe("a nightly that is green", () => {
   test("closes the issue that was open, naming the run that closed it", async () => {
     const { calls, log } = await ran({ issues: [issue(7)] });
     expect(wrote(calls)).toEqual([
-      "-X POST /repos/gokayo43/fixture/issues/7/comments",
-      "-X PATCH /repos/gokayo43/fixture/issues/7 -f state=closed -f state_reason=completed",
+      "-X POST /repos/zerefukun/fixture/issues/7/comments",
+      "-X PATCH /repos/zerefukun/fixture/issues/7 -f state=closed -f state_reason=completed",
     ]);
     expect(log).toContain(`green again: ${RUN_URL}`);
   });
@@ -313,7 +313,7 @@ describe("an API that does not answer", () => {
   test("a jobs read that failed still files the issue, saying what is missing", async () => {
     const { status, calls, log } = await ran({ result: "failure", refuses: ["jobs"] });
     expect(status).toBe(0);
-    expect(wrote(calls)).toEqual(["-X POST /repos/gokayo43/fixture/issues"]);
+    expect(wrote(calls)).toEqual(["-X POST /repos/zerefukun/fixture/issues"]);
     expect(log).toContain(RUN_URL);
     expect(log).toContain("unavailable");
   });
@@ -321,7 +321,7 @@ describe("an API that does not answer", () => {
   test("and a fuzz report nothing can parse costs the issue nothing either", async () => {
     const { status, calls, log } = await ran({ result: "failure", fuzz: "{ this is not json" });
     expect(status).toBe(0);
-    expect(wrote(calls)).toEqual(["-X POST /repos/gokayo43/fixture/issues"]);
+    expect(wrote(calls)).toEqual(["-X POST /repos/zerefukun/fixture/issues"]);
     expect(log).toContain(RUN_URL);
     expect(log).toContain("unavailable");
   });

@@ -142,7 +142,7 @@ export function liveManifestJson(change: (contents: PackageJson) => void = () =>
 export const LIVE_STATIC: Tree = {
   ...CLEAN,
   "package.json": liveManifestJson(),
-  ".github/workflows/ci.yml": `name: CI\non:\n  pull_request:\njobs:\n  check:\n    uses: gokayo43/dev-config/.github/workflows/check.yml@${PIN} # v0.6.0\n`,
+  ".github/workflows/ci.yml": `name: CI\non:\n  pull_request:\njobs:\n  check:\n    uses: zerefukun/dev-config/.github/workflows/check.yml@${PIN} # v0.6.0\n`,
 };
 
 /**

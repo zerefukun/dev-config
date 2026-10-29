@@ -941,8 +941,8 @@ Everything keyed to the repo's own paths is the repo's, in `.oxlintrc.json`:
 ```jsonc
 {
   "extends": [
-    "./node_modules/@gokayo43/dev-config/oxlint.base.json",
-    "./node_modules/@gokayo43/dev-config/design-system.base.json",
+    "./node_modules/@zerefukun/dev-config/oxlint.base.json",
+    "./node_modules/@zerefukun/dev-config/design-system.base.json",
   ],
   "settings": {
     "shadcn": { "ui": "~/components/ui" },
@@ -1776,7 +1776,7 @@ The caller passes it beside its inputs:
 ```yaml
 jobs:
   check:
-    uses: gokayo43/dev-config/.github/workflows/check.yml@<commit sha> # <release tag>
+    uses: zerefukun/dev-config/.github/workflows/check.yml@<commit sha> # <release tag>
     secrets:
       git-ssh-key: ${{ secrets.THE_DEPLOY_KEY }}
 ```
@@ -1926,7 +1926,7 @@ concurrency:
 
 jobs:
   check:
-    uses: gokayo43/dev-config/.github/workflows/check.yml@<commit sha> # <release tag>
+    uses: zerefukun/dev-config/.github/workflows/check.yml@<commit sha> # <release tag>
     with:
       database: postgres
       nightly: ${{ github.event_name == 'schedule' }}
@@ -1939,7 +1939,7 @@ jobs:
     permissions:
       issues: write
       actions: read
-    uses: gokayo43/dev-config/.github/workflows/nightly-issue.yml@<commit sha> # <release tag>
+    uses: zerefukun/dev-config/.github/workflows/nightly-issue.yml@<commit sha> # <release tag>
     with:
       result: ${{ needs.check.result }}
 ```
@@ -2089,9 +2089,9 @@ once every consumer's `bunfig.toml` holds releases for 3 days or less.
 The window reads npm publish times, so it never holds a git dependency (probed,
 bun 1.4.0: a commit hours old installs under a ten-year window). Every package
 this organisation publishes is installed from git, as
-`github:gokayo43/dev-config#<sha>` is, so `minimumReleaseAgeExcludes` names
+`github:zerefukun/dev-config#<sha>` is, so `minimumReleaseAgeExcludes` names
 none of them. The preset's window does reach them, through the dates of their
-GitHub tags, and the preset exempts everything under `gokayo43/` from it: the
+GitHub tags, and the preset exempts everything under `zerefukun/` from it: the
 window guards against a stranger's compromised release, and these are ours.
 
 ### Vulnerability fixes

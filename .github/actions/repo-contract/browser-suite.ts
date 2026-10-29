@@ -55,7 +55,7 @@ const PLAYWRIGHT_BIN = "playwright";
  * resolves to is the package's business, and `tsdown.config.ts` there has why
  * this one is built.
  */
-const SWEEP = "@gokayo43/dev-config/invariant-sweep";
+const SWEEP = "@zerefukun/dev-config/invariant-sweep";
 
 /**
  * The specifier in the position that imports it, rather than anywhere in the
