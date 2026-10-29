@@ -253,7 +253,7 @@ jobs:
   static:
     # A caller with no runner carrying both labels queues here forever rather
     # than failing. That, and what a shared persistent machine changes about
-    # service ports and the workspace: README, "Where it runs".
+    # server ports and the workspace: README, "Where it runs".
     runs-on: [self-hosted, linux]
     # An hour under the nightly, against fifteen minutes for the run somebody
     # is waiting on. The property budget is what needs it: two minutes per

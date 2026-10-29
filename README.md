@@ -1210,22 +1210,28 @@ reason. A default address is how a suite wipes the Redis four stacks on one box
 were sharing.
 
 Both come from the `services` action, which CI runs and a machine runs by hand.
-It needs PostgreSQL 16's server binaries (`initdb`, `pg_ctl`, `postgres`) and
-`redis-server` 7 on `PATH`, and an account that is not root; the replay and
-backfill gates also need PostgreSQL 16's `pg_dump` there. Debian's packages put
-the Postgres binaries in `/usr/lib/postgresql/16/bin`, off `PATH`:
+It needs PostgreSQL 16's `initdb`, `pg_ctl` and `postgres` and `redis-server` 7
+on `PATH`, and an account that is not root; the replay and backfill gates also
+need PostgreSQL 16's `pg_dump` there, and the action's own suite runs the same
+binaries, so they stay on `PATH` for `bun test`. Debian's packages put the
+Postgres ones in `/usr/lib/postgresql/16/bin`. The root is named for the
+checkout, so two checkouts on one machine keep two pairs:
 
 ```sh
-PATH=/usr/lib/postgresql/16/bin:$PATH \
-  bun .github/actions/services/services.main.ts start /tmp/dev-config-services /dev/stdout
+export PATH=/usr/lib/postgresql/16/bin:$PATH
+root=${TMPDIR:-/tmp}/dev-config-services-$(pwd | sha256sum | cut -c1-12)
+bun .github/actions/services/services.main.ts start "$root" /dev/stdout
 export TEST_DATABASE_URL=… TEST_REDIS_URL=…   # the two URLs it printed
 # and when done
-bun .github/actions/services/services.main.ts stop /tmp/dev-config-services /dev/null
+bun .github/actions/services/services.main.ts stop "$root" /dev/null
 ```
 
 Both listen on `127.0.0.1` alone, each on a port the kernel picked, so nothing
-off the box reaches them and a second checkout's pair never collides with the
-first.
+off the box reaches them and the two pairs never collide.
+
+The preset suite runs Renovate's validator with the `re2` addon, which `bun
+install` builds from source, so a machine running it carries `g++`, `make`,
+`python3` and its Node's headers, as "Where it runs" lists for the runner.
 
 The invariant sweep's suite and the count budget's browser suite drive a real
 browser against a real server, because what those fixtures claim is a browser
@@ -1267,21 +1273,20 @@ tag is a name its owner can repoint at any commit, including after the version
 was read here. Only a local `./…` reference is skipped, because it is this
 repo's own tree at this commit and has no ref to pin.
 
-The same step holds every service to a capped tmpfs over each path its image
-declares a volume at, for the reason "Where it runs" gives. It asks the runner's
-Docker for those paths, pulling the image first if the runner does not hold it.
-
-The images a job runs are read the same way: a `docker://` action, a job's
-`container:` in either spelling, every `services.*.image`, and the `runs.image`
-of a Docker container action. Each is held to the digest rule — `@sha256:` and
-not a tag — since an image is as much of a dependency as an action is, and its
-tag moves whenever it is repushed. An action's `runs.image` that names a
-`Dockerfile` is skipped: that is a build from this tree at this commit, with no
-registry reference to pin.
+The same step refuses everything that needs a container runtime: a job's
+`container:` in either spelling, each of its `services:`, a `docker://` step,
+and an action whose `runs.using` is `docker`. No runner in this fleet has a
+runtime to give them, so the refusal names the line here rather than leaving
+the job to fail on the runner; a server a job needs comes from the runner's own
+binaries, the way the `services` action starts Postgres and Redis ("Where it
+runs"). An action reached as `owner/repo@sha` that is itself a Docker action is
+beyond what a read of this repository can see.
 
 There is no standalone `renovate-config-validator` package on npm; the binary
 ships inside `renovate`, which this repo pins as a devDependency so the run
-never fetches one:
+never fetches one. `tests/renovate-preset.test.ts` runs it over `default.json`,
+and over a lookahead preset only RE2 refuses, which is what says the `re2`
+addon built:
 
 ```sh
 ./node_modules/.bin/renovate-config-validator --strict --no-global default.json
@@ -1471,13 +1476,22 @@ is where the move is argued.
 job's Postgres and Redis are the runner's own binaries, started by the
 `services` action, so a runner carrying the labels also carries:
 
-- PostgreSQL 16's server binaries — `initdb`, `pg_ctl`, `postgres` — on `PATH`,
-  or in the directory `$PG_BIN` names (Debian's packages put them in
-  `/usr/lib/postgresql/16/bin`, off `PATH`), and PostgreSQL 16's `pg_dump`
-  where the replay and backfill gates find it;
-- `redis-server` 7 on `PATH`;
-- no system instance of either holding a port it would want, and an account
-  that is not root, since `initdb` refuses one.
+- PostgreSQL 16's `initdb`, `pg_ctl`, `postgres` and `pg_dump` on the job's
+  `PATH` (Debian's packages put them in `/usr/lib/postgresql/16/bin`, which the
+  runner adds to `PATH` itself — one place decides where every step finds
+  them);
+- `redis-server` 7 on the job's `PATH`;
+- no system instance of either holding a port it would want, an account that
+  is not root, since `initdb` refuses one, and Linux's `/proc`, which `stop`
+  reads to make sure a pid is still the server it was written for.
+
+This repo's own CI needs two things more. Its `bun install` builds the `re2`
+addon Renovate's validator grades regexes with, so the runner carries a C++
+toolchain (`g++`, `make`, `python3`) and the headers of its own Node under the
+Node's prefix (`include/node`, which the official tarball and NodeSource's
+package ship; Debian's `nodejs` needs `libnode-dev` and `libuv1-dev`). And its
+browser suites run Playwright's headless chromium, whose shared libraries the
+runner provides, since nothing here runs `--with-deps`.
 
 The action refuses a Postgres that is not 16 and a Redis that is not 7 by
 name: a runner carrying another major would grade every repo against a server

@@ -251,38 +251,12 @@ describe("what a caller may pass, and what the jobs do with it", () => {
     expect(DATABASE_JOB["if"]).toBe("inputs.database == 'postgres'");
   });
 
-  // Every address this job hands out is one the services action started on
-  // 127.0.0.1 and a kernel-picked port (tests/services.test.ts holds that
-  // half), never a number written here. A fixed one is two failures at once
-  // on a self-hosted runner: something else on the box already holds it, and
-  // no two overlapping jobs can both hold it. The wrong implementations are
-  // the readable one — a URL naming 5432 — and a service container coming
-  // back, which the runner has no runtime to create; so the case reads the URLs
-  // the gate is handed back to the step that started the servers.
-  test("the database and Redis the gate is handed are the ones the job started", () => {
-    expect(DATABASE_JOB["services"]).toBeUndefined();
-    expect(DATABASE_JOB["container"]).toBeUndefined();
-    const steps = (isList(DATABASE_JOB["steps"]) ? DATABASE_JOB["steps"] : []).map((step) =>
-      record(step),
-    );
-    const started = steps.find((step) => step["id"] === "services");
-    expect(String(started?.["uses"])).toStartWith("zerefukun/dev-config/.github/actions/services@");
-    expect(record(started?.["with"])["command"]).toBe("start");
-    const naming = steps.find(
-      (step) => typeof step["name"] === "string" && step["name"].startsWith("Allocate a port"),
-    );
-    const environment = record(naming?.["env"]);
-    expect(environment["DATABASE_URL"]).toBe("${{ steps.services.outputs.database-url }}");
-    expect(environment["REDIS_URL"]).toBe("${{ steps.services.outputs.redis-url }}");
-    expect(String(naming?.["run"])).toContain("DATABASE_URL=%s");
-  });
-
-  // The boot gate's app gets a port picked by the kernel, for the second half
-  // of the same reason: 3000 is the framework default, so it is exactly the
-  // port a shared box has already given to something else — on this one, to a
-  // deployed API — and two of these jobs would collide on it as surely as on a
-  // fixed 5432. The wrong implementation is the one that shipped: a health-url
-  // default that still says 3000. Read through `format(...)` rather than by
+  // The boot gate's app gets a port picked by the kernel: 3000 is the framework
+  // default, so it is exactly the port a shared box has already given to
+  // something else — on this one, to a deployed API — and two of these jobs
+  // would collide on it as surely as on any fixed port. The wrong
+  // implementation is the one that shipped: a health-url default that still
+  // says 3000. Read through `format(...)` rather than by
   // searching for the absence of "3000", since a case that only asserted the
   // absence would pass on a default that had been deleted rather than moved.
   test("the boot gate polls the port the job allocated, not a default 3000", () => {

@@ -1,12 +1,11 @@
 import { isList, type Problem, parseEach, record, repoFiles } from "../_lib/gate.ts";
-import { imageOf, servicesIn, unmounted, type VolumesOf } from "./services.ts";
+import { containersIn } from "./containers.ts";
 
 /** GitHub accepts both spellings for every one of these, so both are read. */
 export const ACTION_FILES = [".github/actions/*/action.yml", ".github/actions/*/action.yaml"];
 const OWN = [".github/workflows/*.yml", ".github/workflows/*.yaml", ...ACTION_FILES];
 
 const COMMIT = /@[0-9a-f]{40}$/;
-const DIGEST = /@sha256:[0-9a-f]{64}$/;
 
 /**
  * Every `uses:` in a parsed workflow or action, wherever it sits — a step's, a
@@ -29,54 +28,16 @@ export function referencesIn(document: unknown): string[] {
   ];
 }
 
-/**
- * A Docker container action names its image in its metadata rather than in a
- * `uses:`. Only the `docker://` form is a registry reference — every other
- * value is a Dockerfile in the repo, which is this tree at this commit and has
- * nothing to pin.
- */
-function actionImageOf(document: unknown): string[] {
-  const image = record(record(document)["runs"])["image"];
-  return typeof image === "string" && image.startsWith("docker://") ? [image] : [];
-}
-
-/**
- * Every image a document declares: a job's container, each of its services, and
- * a Docker action's own. Read off the jobs and the metadata rather than walked
- * the way `uses:` is — an image sits at exactly these depths, and a walk would
- * take an action input that happens to be called `container` with it.
- */
-export function imagesIn(document: unknown): string[] {
-  const containers = Object.values(record(record(document)["jobs"])).flatMap((job) =>
-    imageOf(record(job)["container"]),
-  );
-  const services = servicesIn(document).map(({ image }) => image);
-  return [...containers, ...services, ...actionImageOf(document)];
-}
-
 export interface Reference {
   readonly file: string;
-  /** An image is held to the digest rule, an action to the commit rule. */
-  readonly kind: "action" | "image";
   readonly value: string;
 }
 
 export function unpinned(references: readonly Reference[]): Problem[] {
-  return references.flatMap(({ file, kind, value }) => {
+  return references.flatMap(({ file, value }) => {
     // A local action is this repo's own tree at this commit; there is no ref.
-    if (kind === "action" && value.startsWith("./")) return [];
-    // A job's image and a docker:// action are one kind of reference: a
-    // registry name, where only the digest names a build for good.
-    if (kind === "image" || value.startsWith("docker://")) {
-      return DIGEST.test(value)
-        ? []
-        : [
-            {
-              file,
-              message: `${value} is a mutable image tag — pin by @sha256: digest with the tag as a trailing comment`,
-            },
-          ];
-    }
+    // A docker:// image is refused whole by the container rule, pinned or not.
+    if (value.startsWith("./") || value.startsWith("docker://")) return [];
     return COMMIT.test(value)
       ? []
       : [
@@ -91,7 +52,6 @@ export function unpinned(references: readonly Reference[]): Problem[] {
 export async function workflowGate(
   root: string,
   extraPaths: readonly string[],
-  volumesOf: VolumesOf,
 ): Promise<Problem[]> {
   const own = await repoFiles(root, OWN);
   // An extra path that matches nothing is a problem in its own right: it is how
@@ -106,19 +66,16 @@ export async function workflowGate(
   const files = [...new Set([...own, ...extra.flat()])].toSorted((a, b) => a.localeCompare(b));
   const documents = await parseEach(root, files, "YAML");
 
-  const references: Reference[] = documents.read.flatMap(({ file, value }) => [
-    ...referencesIn(value).map((used) => ({ file, kind: "action" as const, value: used })),
-    ...imagesIn(value).map((image) => ({ file, kind: "image" as const, value: image })),
-  ]);
-
-  const services = documents.read.flatMap(({ file, value }) =>
-    servicesIn(value).map((service) => ({ ...service, file })),
+  const references: Reference[] = documents.read.flatMap(({ file, value }) =>
+    referencesIn(value).map((used) => ({ file, value: used })),
   );
 
-  return [
-    ...missing,
-    ...documents.problems,
-    ...unpinned(references),
-    ...(await unmounted(services, volumesOf)),
-  ];
+  const containers = documents.read.flatMap(({ file, value }) =>
+    containersIn(value).map((what) => ({
+      file,
+      message: `${what} needs a container runtime, which no runner in this fleet has — a server the job needs comes from the runner's own binaries (the services action starts Postgres and Redis that way)`,
+    })),
+  );
+
+  return [...missing, ...documents.problems, ...unpinned(references), ...containers];
 }

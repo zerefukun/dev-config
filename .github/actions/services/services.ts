@@ -3,13 +3,13 @@
  * binaries under a directory the job owns, and gone when the job is.
  *
  * The runner's side of the contract: `initdb`, `pg_ctl` and `postgres` from
- * PostgreSQL 16 and `redis-server` 7 on the PATH this is handed (the action
- * puts `$PG_BIN` first on it when the runner sets one), and an account that is
- * not root, since initdb refuses one.
+ * PostgreSQL 16 and `redis-server` 7 on the job's PATH, an account that is not
+ * root (initdb refuses one), and Linux's /proc, which is how a pid is checked
+ * to still be the server it was written for.
  */
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { appendFile, mkdir, readFile, rm } from "node:fs/promises";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 
 /** The two addresses a job's suites and gates are handed. */
 export interface Services {
@@ -20,12 +20,7 @@ export interface Services {
 /** A port on 127.0.0.1 that nothing held when it was asked for. */
 export type Allocate = () => number;
 
-interface Binaries {
-  readonly initdb: string;
-  readonly pgCtl: string;
-  readonly postgres: string;
-  readonly redisServer: string;
-}
+const BINARIES = ["initdb", "pg_ctl", "postgres", "redis-server"] as const;
 
 /**
  * How many ports a start tries per server. Between the allocation and the
@@ -36,8 +31,10 @@ interface Binaries {
  */
 const ATTEMPTS = 5;
 
-/** How long either server gets to say it is ready. */
 const READY_MS = 60_000;
+
+/** How long a server gets to exit on its own signal before it is killed. */
+const EXIT_MS = 10_000;
 
 const PASSWORD = "postgres";
 
@@ -48,34 +45,6 @@ export const freePort: Allocate = () => {
   listener.stop(true);
   return port;
 };
-
-function which(name: string, path: string): string | undefined {
-  return Bun.which(name, { PATH: path }) ?? undefined;
-}
-
-function located(path: string): Binaries {
-  const initdb = which("initdb", path);
-  const pgCtl = which("pg_ctl", path);
-  const postgres = which("postgres", path);
-  const redisServer = which("redis-server", path);
-  if (
-    initdb === undefined ||
-    pgCtl === undefined ||
-    postgres === undefined ||
-    redisServer === undefined
-  ) {
-    const missing = [
-      ["initdb", initdb],
-      ["pg_ctl", pgCtl],
-      ["postgres", postgres],
-      ["redis-server", redisServer],
-    ].flatMap(([name, found]) => (found === undefined ? [name] : []));
-    throw new Error(
-      `the runner has no ${missing.join(", ")} — this action runs PostgreSQL 16's initdb, pg_ctl and postgres and redis-server 7 from PATH, with $PG_BIN put first on it when the runner sets one`,
-    );
-  }
-  return { initdb, pgCtl, postgres, redisServer };
-}
 
 async function run(command: readonly string[]): Promise<{ status: number; output: string }> {
   const proc = Bun.spawn([...command], { stdout: "pipe", stderr: "pipe" });
@@ -88,18 +57,24 @@ async function run(command: readonly string[]): Promise<{ status: number; output
 }
 
 /**
- * The majors the contract names, held rather than trusted: a runner carrying
- * Postgres 17 would grade every repo's migrations against a server its
- * production does not run, and say nothing.
+ * The binaries the contract names, on PATH, at the majors it names. A runner
+ * carrying Postgres 17 would grade every repo's migrations against a server
+ * its production does not run, and say nothing.
  */
-async function versions(binaries: Binaries): Promise<void> {
-  const postgres = await run([binaries.postgres, "--version"]);
-  if (!/\(PostgreSQL\) 16\./.test(postgres.output)) {
-    throw new Error(`${binaries.postgres} is not PostgreSQL 16: ${postgres.output}`);
+async function located(): Promise<void> {
+  const missing = BINARIES.filter((name) => Bun.which(name) === null);
+  if (missing.length > 0) {
+    throw new Error(
+      `the runner has no ${missing.join(", ")} on PATH — this action runs PostgreSQL 16's initdb, pg_ctl and postgres and redis-server 7 from the job's PATH`,
+    );
   }
-  const redis = await run([binaries.redisServer, "--version"]);
+  const postgres = await run(["postgres", "--version"]);
+  if (!/\(PostgreSQL\) 16\./.test(postgres.output)) {
+    throw new Error(`${Bun.which("postgres") ?? ""} is not PostgreSQL 16: ${postgres.output}`);
+  }
+  const redis = await run(["redis-server", "--version"]);
   if (!/\bv=7\./.test(redis.output)) {
-    throw new Error(`${binaries.redisServer} is not Redis 7: ${redis.output}`);
+    throw new Error(`${Bun.which("redis-server") ?? ""} is not Redis 7: ${redis.output}`);
   }
 }
 
@@ -107,30 +82,53 @@ async function textOf(path: string): Promise<string> {
   return existsSync(path) ? await readFile(path, "utf8") : "";
 }
 
-/** Signal 0 delivers nothing and says whether the pid names a process; EPERM is one that is not ours. */
-function alive(pid: number): boolean {
+/**
+ * Whether `pid` is a live `server` process. Read from /proc rather than probed
+ * with signal 0, because a pid the server once had can belong to anything by
+ * the time a stop reads it, and a stop must never signal that. Redis rewrites
+ * its title into one space-separated argument, so the program is the first
+ * word of the first argument.
+ */
+export function runs(pid: number, server: string): boolean {
+  let cmdline: string;
   try {
-    process.kill(pid, 0);
-    return true;
+    cmdline = readFileSync(`/proc/${pid}/cmdline`, "utf8");
   } catch (error) {
-    return error instanceof Error && "code" in error && error.code === "EPERM";
+    // The process exited between the pid being read and its entry being opened.
+    if (error instanceof Error && "code" in error && error.code === "ENOENT") return false;
+    throw error;
   }
+  const program = cmdline.split("\0")[0]?.split(" ")[0] ?? "";
+  return basename(program) === server;
 }
 
-async function startPostgres(
-  root: string,
-  binaries: Binaries,
+/**
+ * Tries ports until `launch` reports one ready, and answers it. `launch`
+ * reports `taken` when the server lost the port to another process before it
+ * could bind; anything else it throws.
+ */
+async function onFreshPort(
+  name: string,
   allocate: Allocate,
-): Promise<string> {
+  launch: (port: number) => Promise<"ready" | "taken">,
+): Promise<number> {
+  for (let attempt = 1; attempt <= ATTEMPTS; attempt++) {
+    const port = allocate();
+    if ((await launch(port)) === "ready") return port;
+  }
+  throw new Error(
+    `${name} found every one of ${ATTEMPTS} allocated ports taken before it could bind`,
+  );
+}
+
+async function startPostgres(root: string, allocate: Allocate): Promise<string> {
   const data = join(root, "postgres");
   const passwordFile = join(root, "password");
-  const log = join(root, "postgres.log");
   await Bun.write(passwordFile, `${PASSWORD}\n`);
 
-  // C.UTF-8 orders text by code point, which is what the alpine image's musl
-  // did for every repo graded before this, so a suite's ORDER BY reads the same.
+  // C.UTF-8 orders by code point, so ORDER BY over text is the same on every runner.
   const initdb = await run([
-    binaries.initdb,
+    "initdb",
     `--pgdata=${data}`,
     "--username=postgres",
     `--pwfile=${passwordFile}`,
@@ -157,42 +155,36 @@ async function startPostgres(
     ].join("\n"),
   );
 
-  for (let attempt = 1; attempt <= ATTEMPTS; attempt++) {
-    const port = allocate();
-    const before = (await textOf(log)).length;
+  const port = await onFreshPort("postgres", allocate, async (candidate) => {
+    const log = join(root, `postgres-${candidate}.log`);
     const started = await run([
-      binaries.pgCtl,
+      "pg_ctl",
       "start",
       `--pgdata=${data}`,
       `--log=${log}`,
       "--wait",
       `--timeout=${READY_MS / 1000}`,
-      `--options=-p ${port}`,
+      `--options=-p ${candidate}`,
     ]);
-    if (started.status === 0) return `postgres://postgres:${PASSWORD}@127.0.0.1:${port}/postgres`;
-    const said = (await textOf(log)).slice(before);
-    if (!/could not bind .*Address already in use/.test(said)) {
-      throw new Error(`postgres did not start on 127.0.0.1:${port}: ${started.output}\n${said}`);
-    }
-  }
-  throw new Error(
-    `postgres found every one of ${ATTEMPTS} allocated ports taken before it could bind`,
-  );
+    if (started.status === 0) return "ready";
+    const said = await textOf(log);
+    if (/could not bind .*Address already in use/.test(said)) return "taken";
+    throw new Error(`postgres did not start on 127.0.0.1:${candidate}: ${started.output}\n${said}`);
+  });
+  return `postgres://postgres:${PASSWORD}@127.0.0.1:${port}/postgres`;
 }
 
-async function startRedis(root: string, binaries: Binaries, allocate: Allocate): Promise<string> {
+async function startRedis(root: string, allocate: Allocate): Promise<string> {
   const data = join(root, "redis");
   await mkdir(data);
-  for (let attempt = 1; attempt <= ATTEMPTS; attempt++) {
-    const port = allocate();
-    // A log per attempt: the verdict below reads this attempt's lines alone.
-    const log = join(root, `redis-${port}.log`);
+  const port = await onFreshPort("redis-server", allocate, async (candidate) => {
+    const log = join(root, `redis-${candidate}.log`);
     const launched = await run([
-      binaries.redisServer,
+      "redis-server",
       "--bind",
       "127.0.0.1",
       "--port",
-      String(port),
+      String(candidate),
       "--protected-mode",
       "yes",
       "--save",
@@ -216,19 +208,14 @@ async function startRedis(root: string, binaries: Binaries, allocate: Allocate):
     let said = "";
     while (Date.now() < deadline) {
       said = await textOf(log);
-      if (/Ready to accept connections/.test(said)) {
-        return `redis://127.0.0.1:${port}`;
-      }
-      if (/Address already in use|aborting/.test(said)) break;
+      if (/Ready to accept connections/.test(said)) return "ready";
+      if (/Address already in use/.test(said)) return "taken";
+      if (/aborting/.test(said)) break;
       await Bun.sleep(50);
     }
-    if (!/Address already in use/.test(said)) {
-      throw new Error(`redis-server did not become ready on 127.0.0.1:${port}:\n${said}`);
-    }
-  }
-  throw new Error(
-    `redis-server found every one of ${ATTEMPTS} allocated ports taken before it could bind`,
-  );
+    throw new Error(`redis-server did not become ready on 127.0.0.1:${candidate}:\n${said}`);
+  });
+  return `redis://127.0.0.1:${port}`;
 }
 
 /**
@@ -240,53 +227,48 @@ async function startRedis(root: string, binaries: Binaries, allocate: Allocate):
  * to take down — the job's `always()` step is the one place that cleans up,
  * whether this failed or a later step did.
  */
-export async function start(
-  root: string,
-  path: string,
-  allocate: Allocate = freePort,
-): Promise<Services> {
+export async function start(root: string, allocate: Allocate = freePort): Promise<Services> {
   if (existsSync(root)) {
     throw new Error(`${root} already exists — a start that was never stopped; run stop first`);
   }
-  const binaries = located(path);
-  await versions(binaries);
+  await located();
   await mkdir(root, { recursive: true });
-  const databaseUrl = await startPostgres(root, binaries, allocate);
-  const redisUrl = await startRedis(root, binaries, allocate);
+  const databaseUrl = await startPostgres(root, allocate);
+  const redisUrl = await startRedis(root, allocate);
   return { databaseUrl, redisUrl };
 }
 
-async function stopRedis(root: string): Promise<void> {
-  const text = await textOf(join(root, "redis.pid"));
-  const pid = Number.parseInt(text, 10);
-  if (Number.isNaN(pid) || !alive(pid)) return;
-  process.kill(pid, "SIGTERM");
-  const deadline = Date.now() + 10_000;
-  while (alive(pid) && Date.now() < deadline) await Bun.sleep(50);
-  if (alive(pid)) process.kill(pid, "SIGKILL");
-  while (alive(pid)) await Bun.sleep(50);
+async function exited(pid: number, server: string, within: number): Promise<boolean> {
+  const deadline = Date.now() + within;
+  while (runs(pid, server) && Date.now() < deadline) await Bun.sleep(50);
+  return !runs(pid, server);
+}
+
+/**
+ * Signals the server whose pid `pidFile` names, and kills it if the signal is
+ * not enough. A pid file naming no live process of that server is a server
+ * already gone — crashed, or never started — and there is nothing to do.
+ */
+async function terminate(pidFile: string, server: string, signal: NodeJS.Signals): Promise<void> {
+  const pid = Number.parseInt(await textOf(pidFile), 10);
+  if (Number.isNaN(pid) || !runs(pid, server)) return;
+  process.kill(pid, signal);
+  if (await exited(pid, server, EXIT_MS)) return;
+  process.kill(pid, "SIGKILL");
+  if (!(await exited(pid, server, EXIT_MS))) {
+    throw new Error(`${server} (pid ${pid}) is still running after SIGKILL`);
+  }
 }
 
 /**
  * Stops whatever `start` left under `root` and deletes it. Nothing there is
  * the ordinary case of a job that failed before it started anything, and is
  * not an error: this runs under `always()`, and a second failure there would
- * bury the first.
+ * bury the first. SIGQUIT is Postgres's immediate shutdown.
  */
-export async function stop(root: string, path: string): Promise<void> {
+export async function stop(root: string): Promise<void> {
   if (!existsSync(root)) return;
-  const data = join(root, "postgres");
-  await stopRedis(root);
-  if (existsSync(join(data, "postmaster.pid"))) {
-    const stopped = await run([
-      located(path).pgCtl,
-      "stop",
-      `--pgdata=${data}`,
-      "--mode=immediate",
-      "--wait",
-    ]);
-    // Left in place on a failure: the log under root is what says why.
-    if (stopped.status !== 0) throw new Error(`pg_ctl stop failed: ${stopped.output}`);
-  }
+  await terminate(join(root, "redis.pid"), "redis-server", "SIGTERM");
+  await terminate(join(root, "postgres", "postmaster.pid"), "postgres", "SIGQUIT");
   await rm(root, { recursive: true, force: true });
 }

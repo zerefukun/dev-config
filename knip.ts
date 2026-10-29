@@ -21,7 +21,15 @@ const config: KnipConfig = {
   // knip's Tailwind plugin, which compiles stylesheets this repo does not have.
   // react and react-dom are the count budget's fixture app, which the suite
   // builds from source held in a string, so no file here imports either.
-  ignoreDependencies: [...mutationLaneDependencies, "tailwindcss", "react", "react-dom"],
+  // renovate is run by path from the preset suite, as the binary its
+  // validator ships in, never imported.
+  ignoreDependencies: [
+    ...mutationLaneDependencies,
+    "tailwindcss",
+    "react",
+    "react-dom",
+    "renovate",
+  ],
   tailwind: false,
   // capacity.js is not this repo's program: it runs inside k6, against modules
   // built into that runtime and resolvable from no package.json anywhere. The

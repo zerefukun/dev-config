@@ -80,17 +80,16 @@ edited:
 
 ## What the seal costs
 
-A suite that starts its own datastore is the case to know about, because it
-fails inside the seal and the failure looks like the gate rather than like the
-lane. `docker run -p 5432:5432 …` from inside the namespace _starts_: the
-daemon is reached over a unix socket, and a filesystem socket is not network.
-The container's published port is on the host's loopback, though, and the
-namespace has its own — so nothing in the suite can connect to what it just
-started, and the run fails on connection refused.
+A suite that expects a datastore started outside it is the case to know about,
+because it fails inside the seal and the failure looks like the gate rather
+than like the lane. A server a job step started on `127.0.0.1` — the `services`
+action's Postgres, a dev server left running — listens on the host's loopback,
+and the namespace has its own, so nothing in the suite can connect to it and
+the run fails on connection refused.
 
-The fix is not the escape. A datastore a unit lane needs is either in-process
-(PGlite, an embedded store) or reached over a unix socket, both of which work
-inside the seal untouched; a datastore a _suite_ needs is the `database` job's
+The fix is not the escape. A datastore a unit lane needs is in-process (PGlite,
+an embedded store), started by the suite itself inside the seal, or reached
+over a unix socket, all of which work inside the seal untouched; a datastore a _suite_ needs is the `database` job's
 subject, and that job does not run through this step. The escape is for a suite
 that reaches somebody else's host, which is a different thing and a rarer one.
 

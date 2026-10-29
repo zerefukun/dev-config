@@ -55,10 +55,10 @@ jobs:
       # The fifth is the test-suite action, which the step below substitutes for
       # rather than uses. Its seal puts the run in a network namespace, and the
       # Postgres and Redis this suite needs listen on the host's loopback, which
-      # that namespace does not reach. Substituting drops three
-      # guarantees every other repo gets — the seal itself, the junit report,
-      # and the two greps over it that refuse a skipped test and an
-      # assertion-free one — so this repo is the one repo not held to them.
+      # that namespace does not reach. Substituting drops three guarantees every
+      # other repo gets — the seal itself, the junit report, and the two greps
+      # over it that refuse a skipped test and an assertion-free one — so this
+      # repo is the one repo not held to them.
       # dev-config#58 is where that is answered.
       - uses: ./.github/actions/repo-contract
         with:
@@ -77,7 +77,17 @@ jobs:
       # the gate that reads a consuming repo's scripts reads them here.
       - uses: ./.github/actions/shell-scripts
 
-      - run: bun install --frozen-lockfile
+      # re2 is the one dependency whose install script runs (package.json's
+      # trustedDependencies): Renovate's regexes are graded with it, and the
+      # suite's preset case fails without it. Under bun its prebuilt download
+      # finds no repository to fetch from, so it builds from the sources in its
+      # lockfile-pinned tarball, against the headers of the runner's own Node
+      # rather than ones node-gyp would download.
+      - run: |
+          set -euo pipefail
+          npm_config_nodedir=$(dirname "$(dirname "$(readlink -f "$(command -v node)")")")
+          export npm_config_nodedir
+          bun install --frozen-lockfile
 
       # The invariant sweep this repo exports is a Playwright fixture, and what
       # its suite grades is what a browser reports — so the suite drives one.
@@ -206,13 +216,6 @@ jobs:
           # those blocks source carry a directive of their own and are read by
           # the shell-scripts gate, which runs over the tracked tree.
           "$SHELLCHECK" --norc --shell=bash "$RUNNER_TEMP"/composite-*.sh
-
-      # The validator is the lockfile's renovate, by path, so the step never
-      # fetches. The preset has to hold against the Renovate that runs it, and
-      # the pin follows that one: the preset's own weekly non-major PR moves it,
-      # behind the same three-day window as every other dependency.
-      - name: Validate the Renovate preset
-        run: ./node_modules/.bin/renovate-config-validator --strict --no-global default.json
 
       - name: Check the Lighthouse budget
         run: |

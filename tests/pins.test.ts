@@ -2,7 +2,6 @@ import { describe, expect, test } from "bun:test";
 
 import {
   ACTION_FILES,
-  imagesIn,
   referencesIn,
   unpinned,
   workflowGate,
@@ -11,33 +10,9 @@ import { containing } from "./matchers.ts";
 import { materialise, type Tree } from "./tree.ts";
 
 const COMMIT = "3d3c42e5aac5ba805825da76410c181273ba90b1";
-const DIGEST = "sha256:20edbde7749f822887a1a022ad526fde0a47d6b2be9a8364433605cf65099416";
-
-/** Every image declaring no volume, so these cases grade the pins alone. */
-const noVolumes = (): Promise<readonly string[]> => Promise.resolve([]);
 
 function uses(...values: string[]): string[] {
-  return unpinned(values.map((value) => ({ file: "w.yml", kind: "action", value }))).map(
-    ({ message }) => message,
-  );
-}
-
-function images(...values: string[]): string[] {
-  return unpinned(values.map((value) => ({ file: "w.yml", kind: "image", value }))).map(
-    ({ message }) => message,
-  );
-}
-
-/** A Docker container action's metadata, which names its image where no `uses:` can reach it. */
-function dockerAction(image: string): string {
-  return `name: x\ndescription: y\nruns:\n  using: docker\n  image: ${image}\n`;
-}
-
-function dockerActionTree(image: string): Tree {
-  return {
-    ".gitignore": "node_modules\n",
-    ".github/actions/dockery/action.yml": dockerAction(image),
-  };
+  return unpinned(values.map((value) => ({ file: "w.yml", value }))).map(({ message }) => message);
 }
 
 describe("reading uses out of a document", () => {
@@ -68,52 +43,6 @@ describe("reading uses out of a document", () => {
   });
 });
 
-// An action is one of two things a job runs by reference; the images it runs
-// in and beside are the other, and they were read by nothing.
-describe("reading the images a job runs", () => {
-  test("both container spellings, and every service", () => {
-    const document = Bun.YAML.parse(
-      [
-        "jobs:",
-        "  a:",
-        "    container: node:22",
-        "    services:",
-        "      postgres:",
-        `        image: postgres:16-alpine@${DIGEST}`,
-        "      redis:",
-        "        image: redis:7-alpine",
-        "  b:",
-        "    container:",
-        "      image: oven/bun:1",
-        "    steps:",
-        `      - uses: actions/checkout@${COMMIT}`,
-      ].join("\n"),
-    );
-    expect(imagesIn(document).toSorted((a, b) => a.localeCompare(b))).toEqual([
-      "node:22",
-      "oven/bun:1",
-      `postgres:16-alpine@${DIGEST}`,
-      "redis:7-alpine",
-    ]);
-  });
-
-  test("a document with no jobs has no images", () => {
-    expect(imagesIn(Bun.YAML.parse("runs:\n  using: composite\n"))).toEqual([]);
-  });
-
-  // A Docker container action names its image in metadata rather than in a
-  // `uses:`, so neither walk reached it and its tag moved freely.
-  test("a docker action's image is read off its metadata", () => {
-    expect(imagesIn(Bun.YAML.parse(dockerAction("docker://alpine:3.22")))).toEqual([
-      "docker://alpine:3.22",
-    ]);
-    // The Dockerfile form names a build in the repo at this commit, not a
-    // registry reference, so there is no digest to ask for.
-    expect(imagesIn(Bun.YAML.parse(dockerAction("Dockerfile")))).toEqual([]);
-    expect(imagesIn(Bun.YAML.parse(dockerAction("./docker/Dockerfile")))).toEqual([]);
-  });
-});
-
 describe("pinning", () => {
   test("a commit SHA passes, in every position", () => {
     expect(
@@ -137,19 +66,10 @@ describe("pinning", () => {
     expect(uses("some/action@3d3c42e")).toEqual([containing("is not pinned")]);
   });
 
-  // The pattern this replaced skipped every docker:// reference while its
-  // comment claimed they were pinned by digest syntax.
-  test("a docker image tag is refused, and its digest is not", () => {
-    expect(uses("docker://alpine:3.22")).toEqual([containing("mutable image tag")]);
-    expect(uses(`docker://alpine@${DIGEST}`)).toEqual([]);
-  });
-
-  // A service is the same registry reference a docker:// action is, and a tag
-  // moves under it just as freely.
-  test("a job's image is held to the digest rule, not the commit rule", () => {
-    expect(images("postgres:16-alpine")).toEqual([containing("mutable image tag")]);
-    expect(images("postgres:16-alpine@sha256:short")).toEqual([containing("mutable image tag")]);
-    expect(images(`postgres:16-alpine@${DIGEST}`)).toEqual([]);
+  // A docker:// step is refused whole by the container rule; a second finding
+  // about its ref would be noise about a line that cannot stay either way.
+  test("a docker:// reference is left to the container rule", () => {
+    expect(uses("docker://alpine:3.22")).toEqual([]);
   });
 });
 
@@ -165,9 +85,7 @@ describe("the files read", () => {
 
   test("both spellings, at any depth, and the extra paths", async () => {
     const root = await materialise(CLEAN);
-    const problems = (await workflowGate(root, ["setup/*.yml"], noVolumes)).map(
-      ({ file }) => file ?? "",
-    );
+    const problems = (await workflowGate(root, ["setup/*.yml"])).map(({ file }) => file ?? "");
     expect(problems.toSorted((a, b) => (a < b ? -1 : 1))).toEqual([
       ".github/actions/nested/deeper/action.yaml",
       ".github/workflows/lighthouse.yaml",
@@ -175,65 +93,9 @@ describe("the files read", () => {
     ]);
   });
 
-  // The gate walked `uses:` alone, so a job could run every action by SHA
-  // inside a service image that moves under it whenever the tag is repushed.
-  test("the images a job declares are read out of the file its actions are", async () => {
-    const workflow = (image: string): Tree => ({
-      ".gitignore": "node_modules\n",
-      ".github/workflows/db.yml": [
-        "jobs:",
-        "  check:",
-        "    container: oven/bun:1@" + DIGEST,
-        "    services:",
-        "      postgres:",
-        `        image: ${image}`,
-        "    steps:",
-        `      - uses: actions/checkout@${COMMIT}`,
-        "",
-      ].join("\n"),
-    });
-
-    const mutable = await workflowGate(
-      await materialise(workflow("postgres:16-alpine")),
-      [],
-      noVolumes,
-    );
-    expect(mutable.map(({ file, message }) => `${file ?? ""}: ${message}`)).toEqual([
-      containing(".github/workflows/db.yml: postgres:16-alpine is a mutable image tag"),
-    ]);
-    expect(
-      await workflowGate(
-        await materialise(workflow(`postgres:16-alpine@${DIGEST}`)),
-        [],
-        noVolumes,
-      ),
-    ).toEqual([]);
-  });
-
-  test("a docker action's image is refused by the file that declares it", async () => {
-    const mutable = await workflowGate(
-      await materialise(dockerActionTree("docker://alpine:3.22")),
-      [],
-      noVolumes,
-    );
-    expect(mutable.map(({ file, message }) => `${file ?? ""}: ${message}`)).toEqual([
-      containing(".github/actions/dockery/action.yml: docker://alpine:3.22 is a mutable image tag"),
-    ]);
-    expect(
-      await workflowGate(
-        await materialise(dockerActionTree(`docker://alpine@${DIGEST}`)),
-        [],
-        noVolumes,
-      ),
-    ).toEqual([]);
-    expect(
-      await workflowGate(await materialise(dockerActionTree("Dockerfile")), [], noVolumes),
-    ).toEqual([]);
-  });
-
   test("an extra path that matches nothing is how a renamed file stops being checked", async () => {
     const root = await materialise(CLEAN);
-    const messages = (await workflowGate(root, ["setup/renamed-*.yml"], noVolumes)).map(
+    const messages = (await workflowGate(root, ["setup/renamed-*.yml"])).map(
       ({ message }) => message,
     );
     expect(messages[0]).toEqual(containing("matched no file"));
@@ -247,7 +109,7 @@ describe("the files read", () => {
       ...CLEAN,
       ".github/workflows/broken.yml": "jobs:\n  a:\n   - oops\n  b: [",
     });
-    const problems = (await workflowGate(root, [], noVolumes)).map(({ file }) => file ?? "");
+    const problems = (await workflowGate(root, [])).map(({ file }) => file ?? "");
     expect(problems).toContain(".github/workflows/broken.yml");
     expect(problems).toContain(".github/workflows/lighthouse.yaml");
   });
@@ -259,7 +121,7 @@ describe("the files read", () => {
       "node_modules/some-action/.github/workflows/ci.yml":
         "jobs:\n  a:\n    steps:\n      - uses: actions/checkout@v5\n",
     });
-    expect((await workflowGate(root, [], noVolumes)).map(({ file }) => file ?? "")).not.toContain(
+    expect((await workflowGate(root, [])).map(({ file }) => file ?? "")).not.toContain(
       "node_modules/some-action/.github/workflows/ci.yml",
     );
   });

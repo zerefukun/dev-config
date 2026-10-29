@@ -1,33 +1,30 @@
 import { describe, expect, test } from "bun:test";
 import { existsSync } from "node:fs";
-import { chmod, mkdtemp, readFile, rm } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readFile, rm } from "node:fs/promises";
 import { networkInterfaces, tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { RedisClient, SQL } from "bun";
 
-import { required } from "../.github/actions/_lib/gate.ts";
 import { rows } from "../.github/actions/db-gate/database.ts";
 import {
   type Allocate,
   freePort,
+  runs,
   type Services,
   start,
   stop,
 } from "../.github/actions/services/services.ts";
 
-/**
- * The runner contract, read off this process's PATH: the suite runs the
- * binaries the action would, and fails rather than skips on a machine without
- * them.
- */
-const PATH = required("PATH", "the server binaries are looked up on it");
+/** The command the action runs, so the PATH it reads is the one a case hands it. */
+const MAIN = join(import.meta.dir, "..", ".github", "actions", "services", "services.main.ts");
 
 /** initdb and two server starts take a few seconds; the margin is a loaded runner. */
 const SLOW = 60_000;
 
 interface Scratch extends AsyncDisposable {
   readonly root: string;
+  readonly parent: string;
 }
 
 /** A root no start has used, stopped and deleted when the case ends, whatever it did there. */
@@ -36,8 +33,9 @@ async function scratch(): Promise<Scratch> {
   const root = join(parent, "services");
   return {
     root,
+    parent,
     async [Symbol.asyncDispose]() {
-      await stop(root, PATH);
+      await stop(root);
       await rm(parent, { recursive: true, force: true });
     },
   };
@@ -53,21 +51,27 @@ async function refusal(pending: Promise<unknown>): Promise<string> {
   return outcome;
 }
 
+/** `services.main.ts start` as the action runs it, on the PATH a case chooses. */
+async function startOn(path: string, root: string): Promise<{ status: number; output: string }> {
+  const proc = Bun.spawn([process.execPath, MAIN, "start", root, join(root, "..", "outputs")], {
+    env: { ...process.env, PATH: path },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, status] = await Promise.all([
+    new Response(proc.stdout).text(),
+    new Response(proc.stderr).text(),
+    proc.exited,
+  ]);
+  return { status, output: stdout + stderr };
+}
+
 function portOf(url: string): number {
   return Number(new URL(url).port);
 }
 
 async function pidIn(path: string): Promise<number> {
   return Number.parseInt(await readFile(path, "utf8"), 10);
-}
-
-function alive(pid: number): boolean {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch {
-    return false;
-  }
 }
 
 /** An allocator that answers from a script, then from the kernel. */
@@ -124,7 +128,7 @@ describe("start", () => {
     "hands back a Postgres and a Redis that answer, on 127.0.0.1 and nowhere else",
     async () => {
       await using run = await scratch();
-      const services = await start(run.root, PATH);
+      const services = await start(run.root);
       await answers(services);
 
       const sql = new SQL(services.databaseUrl);
@@ -146,7 +150,7 @@ describe("start", () => {
     async () => {
       await using first = await scratch();
       await using second = await scratch();
-      const [a, b] = await Promise.all([start(first.root, PATH), start(second.root, PATH)]);
+      const [a, b] = await Promise.all([start(first.root), start(second.root)]);
       expect(portOf(a.databaseUrl)).not.toBe(portOf(b.databaseUrl));
       expect(portOf(a.redisUrl)).not.toBe(portOf(b.redisUrl));
       await answers(a);
@@ -163,7 +167,7 @@ describe("start", () => {
     async () => {
       await using run = await scratch();
       using taken = held();
-      const services = await start(run.root, PATH, scripted(taken.port, freePort(), taken.port));
+      const services = await start(run.root, scripted(taken.port, freePort(), taken.port));
       expect(portOf(services.databaseUrl)).not.toBe(taken.port);
       expect(portOf(services.redisUrl)).not.toBe(taken.port);
       await answers(services);
@@ -176,7 +180,7 @@ describe("start", () => {
     async () => {
       await using run = await scratch();
       using taken = held();
-      expect(await refusal(start(run.root, PATH, () => taken.port))).toContain(
+      expect(await refusal(start(run.root, () => taken.port))).toContain(
         "postgres found every one of 5 allocated ports taken",
       );
     },
@@ -189,23 +193,25 @@ describe("start", () => {
     "refuses a root a previous start left behind",
     async () => {
       await using run = await scratch();
-      await start(run.root, PATH);
-      expect(await refusal(start(run.root, PATH))).toContain("already exists");
+      await start(run.root);
+      expect(await refusal(start(run.root))).toContain("already exists");
     },
     SLOW,
   );
 
-  test("names every binary the runner is missing, before it starts anything", async () => {
+  // The binaries come from the job's PATH and nowhere else, so a runner that
+  // keeps them off it fails here, at the start, rather than in whichever later
+  // step first looks them up a different way.
+  test("names every binary missing from the job's PATH, before it starts anything", async () => {
     await using run = await scratch();
-    const empty = await mkdtemp(join(tmpdir(), "no-binaries-"));
-    try {
-      expect(await refusal(start(run.root, empty))).toContain(
-        "the runner has no initdb, pg_ctl, postgres, redis-server",
-      );
-      expect(existsSync(run.root)).toBe(false);
-    } finally {
-      await rm(empty, { recursive: true, force: true });
-    }
+    const empty = join(run.parent, "empty");
+    await mkdir(empty);
+    const started = await startOn(empty, run.root);
+    expect(started.status).toBe(1);
+    expect(started.output).toContain(
+      "::error::the runner has no initdb, pg_ctl, postgres, redis-server on PATH",
+    );
+    expect(existsSync(run.root)).toBe(false);
   });
 
   // A runner carrying another major grades every migration against a server
@@ -213,52 +219,46 @@ describe("start", () => {
   // on PATH.
   test("refuses a Postgres that is not 16", async () => {
     await using run = await scratch();
-    const bin = await mkdtemp(join(tmpdir(), "postgres-17-"));
-    try {
-      for (const name of ["initdb", "pg_ctl", "postgres"]) {
-        await Bun.write(join(bin, name), "#!/bin/sh\necho 'postgres (PostgreSQL) 17.2'\n");
-        await chmod(join(bin, name), 0o755);
-      }
-      expect(await refusal(start(run.root, `${bin}:${PATH}`))).toContain("is not PostgreSQL 16");
-      expect(existsSync(run.root)).toBe(false);
-    } finally {
-      await rm(bin, { recursive: true, force: true });
+    const bin = join(run.parent, "postgres-17");
+    await mkdir(bin);
+    for (const name of ["initdb", "pg_ctl", "postgres"]) {
+      await Bun.write(join(bin, name), "#!/bin/sh\necho 'postgres (PostgreSQL) 17.2'\n");
+      await chmod(join(bin, name), 0o755);
     }
+    const started = await startOn(`${bin}:${process.env["PATH"] ?? ""}`, run.root);
+    expect(started.status).toBe(1);
+    expect(started.output).toContain("is not PostgreSQL 16");
+    expect(existsSync(run.root)).toBe(false);
   });
 });
 
 // The wrong implementations: a stop that deletes the directory and leaves the
 // servers running on it; one that leaves the directory; one that fails when
 // there is nothing to stop, which under `always()` buries the failure that
-// ended the job early; and one that only knows how to take down a whole pair,
-// so a start that died between the two leaves its Postgres running.
+// ended the job early; one that only knows how to take down a whole pair, so a
+// start that died between the two leaves its Postgres running; one that
+// treats a server that already died as a failure, which leaves its directory
+// behind; and one that signals whatever now holds a pid the server once had.
 describe("stop", () => {
   test(
     "takes both servers down and deletes everything they wrote",
     async () => {
       await using run = await scratch();
-      await start(run.root, PATH);
-      const running = [
-        await pidIn(join(run.root, "postgres", "postmaster.pid")),
-        await pidIn(join(run.root, "redis.pid")),
-      ];
-      expect(running.map(alive)).toEqual([true, true]);
-      await stop(run.root, PATH);
-      expect(running.map(alive)).toEqual([false, false]);
+      await start(run.root);
+      const postgres = await pidIn(join(run.root, "postgres", "postmaster.pid"));
+      const redis = await pidIn(join(run.root, "redis.pid"));
+      expect([runs(postgres, "postgres"), runs(redis, "redis-server")]).toEqual([true, true]);
+      await stop(run.root);
+      expect([runs(postgres, "postgres"), runs(redis, "redis-server")]).toEqual([false, false]);
       expect(existsSync(run.root)).toBe(false);
     },
     SLOW,
   );
 
   test("is nothing at all when nothing was started", async () => {
-    const parent = await mkdtemp(join(tmpdir(), "services-"));
-    try {
-      // An empty PATH as well: a job that failed before start may not even have the binaries.
-      await stop(join(parent, "services"), parent);
-      expect(existsSync(join(parent, "services"))).toBe(false);
-    } finally {
-      await rm(parent, { recursive: true, force: true });
-    }
+    await using run = await scratch();
+    await stop(run.root);
+    expect(existsSync(run.root)).toBe(false);
   });
 
   test(
@@ -271,13 +271,38 @@ describe("stop", () => {
         if (asked > 1) throw new Error("the allocator died");
         return freePort();
       };
-      expect(await refusal(start(run.root, PATH, dying))).toContain("the allocator died");
+      expect(await refusal(start(run.root, dying))).toContain("the allocator died");
       const pid = await pidIn(join(run.root, "postgres", "postmaster.pid"));
-      expect(alive(pid)).toBe(true);
-      await stop(run.root, PATH);
-      expect(alive(pid)).toBe(false);
+      expect(runs(pid, "postgres")).toBe(true);
+      await stop(run.root);
+      expect(runs(pid, "postgres")).toBe(false);
       expect(existsSync(run.root)).toBe(false);
     },
     SLOW,
   );
+
+  test(
+    "cleans up after a Postgres that crashed",
+    async () => {
+      await using run = await scratch();
+      await start(run.root);
+      const pid = await pidIn(join(run.root, "postgres", "postmaster.pid"));
+      process.kill(pid, "SIGKILL");
+      await stop(run.root);
+      expect(existsSync(run.root)).toBe(false);
+    },
+    SLOW,
+  );
+
+  test("never signals a process that reused a server's pid", async () => {
+    await using run = await scratch();
+    await mkdir(join(run.root, "postgres"), { recursive: true });
+    await using bystander = Bun.spawn(["sleep", "30"]);
+    await Bun.write(join(run.root, "postgres", "postmaster.pid"), `${bystander.pid}\n`);
+    await Bun.write(join(run.root, "redis.pid"), `${bystander.pid}\n`);
+    await stop(run.root);
+    expect(runs(bystander.pid, "sleep")).toBe(true);
+    expect(existsSync(run.root)).toBe(false);
+    bystander.kill();
+  });
 });

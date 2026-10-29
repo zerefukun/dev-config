@@ -4,8 +4,8 @@ description: >-
   binaries under RUNNER_TEMP and listening on 127.0.0.1 alone, each on a port
   the kernel picked. `start` hands back their URLs as outputs; `stop`, in a step
   under `always()`, takes both down and deletes their data. The runner provides
-  PostgreSQL 16's initdb, pg_ctl and postgres on PATH or in $PG_BIN, and
-  redis-server 7 on PATH. README's "Where it runs" has why it is this shape.
+  PostgreSQL 16's initdb, pg_ctl and postgres and redis-server 7 on the job's
+  PATH. README's "Where it runs" has why it is this shape.
 
 inputs:
   command:
@@ -31,5 +31,4 @@ runs:
         INPUT_COMMAND: ${{ inputs.command }}
       run: |
         set -euo pipefail
-        PATH="${PG_BIN:+$PG_BIN:}$PATH" \
-          bun "$GITHUB_ACTION_PATH/services.main.ts" "$INPUT_COMMAND" "$RUNNER_TEMP/services" "$GITHUB_OUTPUT"
+        bun "$GITHUB_ACTION_PATH/services.main.ts" "$INPUT_COMMAND" "$RUNNER_TEMP/services" "$GITHUB_OUTPUT"

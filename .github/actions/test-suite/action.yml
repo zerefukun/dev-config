@@ -11,8 +11,8 @@ description: >-
   that script, and the gate has to run what the repo runs.
 
   The lane this runs is the one the shared check.yml gives it: a job with no
-  database or cache started for it, which is what makes it a unit lane rather than a naming
-  convention. A test that reaches a live host there is slow, is graded by
+  database or cache started for it, which is what makes it a unit lane rather
+  than a naming convention. A test that reaches a live host there is slow, is graded by
   somebody else's uptime, and fails on the week the gate is loudest — so the run
   is sealed in a network namespace and the call fails where it is written.
   docs/gates/test-suite.md has the shape of it.
