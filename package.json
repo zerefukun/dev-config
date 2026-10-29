@@ -82,6 +82,7 @@
     "oxlint-tsgolint": "7.0.2001",
     "react": "19.3.0",
     "react-dom": "19.3.0",
+    "renovate": "44.182.2",
     "tailwindcss": "4.3.3",
     "tsdown": "0.23.0",
     "typescript": "7.0.2"

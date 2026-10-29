@@ -31,8 +31,8 @@ jobs:
         with:
           # gitleaks reads history, and a shallow clone has none.
           fetch-depth: 0
-          # Nothing here pushes, and the job runs third-party code (an
-          # unpinned npx, a scaffolded tree's dependencies) in this workspace.
+          # Nothing here pushes, and the job runs third-party code (its own
+          # dependencies, a scaffolded tree's) in this workspace.
           persist-credentials: false
 
       - uses: ./.github/actions/secret-scan
@@ -87,7 +87,7 @@ jobs:
       # No `--with-deps`: it shells out to `sudo apt-get`, and the runner user
       # here may not run apt. The shared libraries it would install are already
       # on the box, which is what lets the browser suites pass without it.
-      - run: bunx playwright install chromium-headless-shell
+      - run: ./node_modules/.bin/playwright install chromium-headless-shell
 
       # The gates this repo ships are TypeScript, and their suite is what proves
       # each one refuses a violating tree and passes a clean one. Every other
@@ -207,9 +207,12 @@ jobs:
           # the shell-scripts gate, which runs over the tracked tree.
           "$SHELLCHECK" --norc --shell=bash "$RUNNER_TEMP"/composite-*.sh
 
+      # The validator is the lockfile's renovate, by path, so the step never
+      # fetches. The preset has to hold against the Renovate that runs it, and
+      # the pin follows that one: the preset's own weekly non-major PR moves it,
+      # behind the same three-day window as every other dependency.
       - name: Validate the Renovate preset
-        # Deliberately unpinned: the preset has to hold against the Renovate that runs it today.
-        run: npx --yes --package renovate renovate-config-validator --strict --no-global default.json
+        run: ./node_modules/.bin/renovate-config-validator --strict --no-global default.json
 
       - name: Check the Lighthouse budget
         run: |

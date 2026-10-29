@@ -1234,7 +1234,7 @@ browser. Both need Playwright's chromium, which CI installs and a machine gets
 with:
 
 ```sh
-bunx playwright install chromium-headless-shell
+./node_modules/.bin/playwright install chromium-headless-shell
 ```
 
 No `--with-deps`: it shells out to `sudo apt-get`, which the CI runner's account
@@ -1280,10 +1280,11 @@ tag moves whenever it is repushed. An action's `runs.image` that names a
 registry reference to pin.
 
 There is no standalone `renovate-config-validator` package on npm; the binary
-ships inside `renovate`:
+ships inside `renovate`, which this repo pins as a devDependency so the run
+never fetches one:
 
 ```sh
-npx --package renovate renovate-config-validator --strict --no-global default.json
+./node_modules/.bin/renovate-config-validator --strict --no-global default.json
 ```
 
 `--no-global` is load-bearing. Handed a filename the validator assumes
