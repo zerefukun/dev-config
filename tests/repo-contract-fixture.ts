@@ -33,7 +33,7 @@ export interface PackageJson {
 
 const MANIFEST: PackageJson = {
   name: "clean",
-  packageManager: "bun@1.3.11",
+  packageManager: "bun@1.4.0",
   lifecycle: "dev",
   scripts: { "db:migrate": "bun run src/server/migrate.ts", test: "bun test" },
   devDependencies: {
@@ -45,7 +45,20 @@ const MANIFEST: PackageJson = {
 
 const THRESHOLD = "{ lines = 0.75, functions = 0.75 }";
 
-const BUNFIG = `[install]\nminimumReleaseAge = 604800\nexact = true\n\n[test]\ncoverageThreshold = ${THRESHOLD}\n`;
+/** The three parts of the clean tree's bunfig a case may write differently. */
+interface Bunfig {
+  readonly window?: string;
+  readonly pinning?: string;
+  readonly test?: string;
+}
+
+function bunfig({
+  window = "minimumReleaseAge = 259200\n",
+  pinning = "exact = true\n",
+  test = `coverageThreshold = ${THRESHOLD}\n`,
+}: Bunfig = {}): string {
+  return `[install]\n${window}${pinning}\n[test]\n${test}`;
+}
 
 export const CLEAN: Tree = {
   "package.json": JSON.stringify(MANIFEST),
@@ -55,9 +68,9 @@ export const CLEAN: Tree = {
   }),
   "knip.ts":
     'import { base } from "@zerefukun/dev-config/knip.base.ts";\nexport default { ...base };\n',
-  "bunfig.toml": BUNFIG,
+  "bunfig.toml": bunfig(),
   "lefthook.yml":
-    "pre-commit:\n  commands:\n    secrets:\n      run: gitleaks git --staged --redact --no-banner .\n\npre-push:\n  commands:\n    typecheck:\n      run: bun run typecheck\n    test:\n      run: bun test\n",
+    "pre-commit:\n  commands:\n    secrets:\n      run: gitleaks git --staged --redact --no-banner .\n",
   ".gitignore": "node_modules\n.env\n.env.*\n!.env.example\n!.env.enc\n",
   ".env": "BETTER_AUTH_SECRET=not-a-real-value\n",
   ".env.example": "BETTER_AUTH_SECRET=\n",
@@ -106,6 +119,42 @@ export function withSpec(name: string, spec: string): Tree {
 }
 
 /**
+ * The manifest a live static site ships, and whatever a case changes about it.
+ * Stated once: the lifecycle cases differ from this tree by one field, and
+ * rebuilding it around each of them is how two definitions of "a live static
+ * repo" start disagreeing about which fault a case is showing.
+ */
+export function liveManifestJson(change: (contents: PackageJson) => void = () => {}): string {
+  return manifestJson(MANIFEST, (contents) => {
+    contents.lifecycle = "live";
+    contents.dependencies = { "@sentry/astro": "10.24.0" };
+    delete contents.scripts?.["db:migrate"];
+    change(contents);
+  });
+}
+
+/**
+ * A live repo with no database of its own: a marketing site, and half the
+ * fleet. Shared, because it is the smallest thing "live" can be and both live
+ * suites start every case from it — the one that grades what a database costs,
+ * and the one that grades what pages do.
+ */
+export const LIVE_STATIC: Tree = {
+  ...CLEAN,
+  "package.json": liveManifestJson(),
+  ".github/workflows/ci.yml": `name: CI\non:\n  pull_request:\njobs:\n  check:\n    uses: gokayo43/dev-config/.github/workflows/check.yml@${PIN} # v0.6.0\n`,
+};
+
+/**
+ * That site with one thing about its manifest changed — the graft both live
+ * suites were writing by hand, each with a fallback for a key it had just
+ * written itself.
+ */
+export function liveSite(change: (contents: PackageJson) => void): Tree {
+  return { ...LIVE_STATIC, "package.json": liveManifestJson(change) };
+}
+
+/**
  * A config with the reason above one of its switch-offs taken out, which is the
  * only way to ask the off-reason walker whether it would find one missing —
  * asserting that a config draws no findings is a test a walker returning nothing
@@ -135,7 +184,7 @@ export function withoutReasonFor(text: string, rule: string, under = ""): string
   return lines.join("\n");
 }
 
-/** The clean tree with a different coverage floor written into its bunfig. */
-export function withThreshold(threshold: string): Tree {
-  return { ...CLEAN, "bunfig.toml": BUNFIG.replace(THRESHOLD, threshold) };
+/** The clean tree with some of its bunfig written differently. */
+export function withBunfig(parts: Bunfig): Tree {
+  return { ...CLEAN, "bunfig.toml": bunfig(parts) };
 }

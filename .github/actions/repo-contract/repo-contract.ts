@@ -7,6 +7,7 @@ import {
   isList,
   isObject,
   isTracked,
+  type Manifest,
   manifests,
   type Problem,
   readConfig,
@@ -15,10 +16,27 @@ import {
   withoutComments,
 } from "../_lib/gate.ts";
 import { checkPins, isExactVersion } from "../_lib/dependency-specs.ts";
+import { declaredIn } from "../_lib/lifecycle.ts";
 import { CI_WORKFLOW, type DatabaseGates } from "./ci-workflow.ts";
-import { checkLifecycle, checkLive, declaredIn, lifecycleAtBase } from "./live.ts";
+import { checkLifecycle, checkLive, lifecycleAtBase } from "./live.ts";
 
 const DEV_CONFIG = "@zerefukun/dev-config";
+
+const OXLINT_BASE = "oxlint.base.json";
+
+const DESIGN_SYSTEM_BASE = "design-system.base.json";
+
+/** The oxlint configs this repo ships, which are the only files a repo's `extends` may name. */
+const SHARED_BASES = [OXLINT_BASE, DESIGN_SYSTEM_BASE] as const;
+
+type SharedBase = (typeof SHARED_BASES)[number];
+
+/** `.oxlintrc.json` as read, and which shared base each of its `extends` entries names. */
+interface LintConfig {
+  readonly file: ConfigFile;
+  /** One per entry, in order; `undefined` for an entry that names none of them. */
+  readonly bases: readonly (SharedBase | undefined)[];
+}
 
 const LOCKFILES = ["package-lock.json", "pnpm-lock.yaml", "yarn.lock"];
 
@@ -309,10 +327,60 @@ async function checkNestedConfigs(root: string): Promise<Problem[]> {
   }));
 }
 
+/**
+ * Which shared base each `extends` entry names — the one reading of the list
+ * that every question about it is answered from, so whether a repo inherits
+ * the base, whether it names anything else and whether a Tailwind repo reads
+ * the design-system base cannot disagree about one entry. A base is the file
+ * at the path the package installs it to, written the way README writes it:
+ * a path that merely ends in the package's is a copy laid out to look like it.
+ * `config-lineage` waives where a base is read from, so under it a base is
+ * known by its file name.
+ */
+function readLintConfig(file: ConfigFile, exempt: boolean): LintConfig {
+  const bases = extendsList(file.contents?.["extends"]).map((entry) =>
+    SHARED_BASES.find((base) =>
+      exempt
+        ? entry === base || entry.endsWith(`/${base}`)
+        : entry === `./node_modules/${DEV_CONFIG}/${base}`,
+    ),
+  );
+  return { file, bases };
+}
+
+/**
+ * A repo that builds its pages with Tailwind owes the design-system base,
+ * which is what fails a page whose colours, values or shared components have
+ * drifted from the product's theme. Keyed to `tailwindcss` in any manifest and
+ * any dependency field, because that is the package every such repo declares
+ * whichever plugin wires it into the build. No exemption waives it:
+ * `config-lineage` changes where the base may be read from, never whether a
+ * Tailwind repo reads it.
+ */
+function checkDesignSystem(
+  all: readonly Manifest[],
+  { file, bases }: LintConfig,
+  exempt: boolean,
+): Problem[] {
+  const declaring = all.flatMap(({ file: manifest, value }) =>
+    specOf(value, "tailwindcss") === undefined ? [] : [manifest],
+  );
+  if (declaring.length === 0 || file.contents === undefined || bases.includes(DESIGN_SYSTEM_BASE)) {
+    return [];
+  }
+  const path = exempt ? DESIGN_SYSTEM_BASE : `./node_modules/${DEV_CONFIG}/${DESIGN_SYSTEM_BASE}`;
+  return [
+    {
+      file: ".oxlintrc.json",
+      message: `${declaring.join(", ")} depends on tailwindcss — add ${path} to extends beside ${OXLINT_BASE}, and @shadcn/lint to devDependencies, so a page using a raw colour, an arbitrary value or a restyled shared component fails lint`,
+    },
+  ];
+}
+
 async function checkLineage(
   root: string,
   contents: ConfigObject,
-  reading: Promise<ConfigFile>,
+  linting: Promise<LintConfig>,
   exempt: boolean,
 ): Promise<Problem[]> {
   const problems: Problem[] = [];
@@ -330,28 +398,26 @@ async function checkLineage(
     });
   }
 
-  const oxlintrc = await reading;
+  const { file: oxlintrc, bases } = await linting;
   problems.push(...oxlintrc.problems);
   if (oxlintrc.contents !== undefined) {
-    const targets = extendsList(oxlintrc.contents["extends"]);
-    const inherits = targets.some((entry) => entry.endsWith(`${DEV_CONFIG}/oxlint.base.json`));
-    // A second target is read after the base and wins over it, so anything it
-    // switches off is switched off in a file this gate never opens. Refused
-    // rather than followed: one file to read is the property that makes every
-    // rule below checkable, and `overrides` is where a per-directory difference
-    // already belongs. Graded even under `config-lineage`, which waives WHERE a
-    // config inherits from and never how many places it inherits from.
-    if (targets.length > 1) {
+    const inherits = bases.includes(OXLINT_BASE);
+    // A second target is read after the first and wins over it, so anything a
+    // file of the repo's own switches off is switched off in a file this gate
+    // never opens. Refused rather than followed: the bases are this repo's, and
+    // `overrides` is where a per-directory difference already belongs. Graded
+    // even under `config-lineage`, which waives WHERE a config inherits from
+    // and never how many places it inherits from.
+    if (bases.length > 1 && (bases.includes(undefined) || new Set(bases).size < bases.length)) {
       problems.push({
         file: ".oxlintrc.json",
-        message:
-          "extends must name the shared base and nothing else — the gate reads .oxlintrc.json; put the override there",
+        message: `extends must name the shared bases and nothing else, each once — ${OXLINT_BASE}, and ${DESIGN_SYSTEM_BASE} beside it where tailwindcss is a dependency; the gate reads .oxlintrc.json, so put the override there`,
       });
     }
     if (!inherits && !exempt) {
       problems.push({
         file: ".oxlintrc.json",
-        message: `.oxlintrc.json must extend ./node_modules/${DEV_CONFIG}/oxlint.base.json`,
+        message: `.oxlintrc.json must extend ./node_modules/${DEV_CONFIG}/${OXLINT_BASE}`,
       });
     }
     // Only the base turns the type-aware rules on, so only a repo that
@@ -417,6 +483,29 @@ function floorsCoverage(threshold: unknown): boolean {
   );
 }
 
+/** The fleet's release-age window in seconds; a repo may hold releases longer, never shorter. */
+export const MINIMUM_RELEASE_AGE = 259_200;
+
+const DAY = 86_400;
+
+/**
+ * A whole package name, scoped or not: the only form bun matches an exclusion
+ * against (probed, bun 1.4.0: under `"@types/*"`, `"@types/"` and `"@types"`
+ * alike, `@types/bun` stays held).
+ */
+const PACKAGE_NAME = /^(@[\w.~-]+\/)?[\w.~-]+$/;
+
+function checkReleaseAgeExcludes(excludes: unknown): Problem[] {
+  // Anything but a list bun refuses itself at every install (probed, bun
+  // 1.4.0: "Expected array for minimumReleaseAgeExcludes").
+  return (isList(excludes) ? excludes : [])
+    .filter((entry) => typeof entry !== "string" || !PACKAGE_NAME.test(entry))
+    .map((entry) => ({
+      file: "bunfig.toml",
+      message: `[install] minimumReleaseAgeExcludes lists ${JSON.stringify(entry)}, which exempts nothing: bun matches each entry against a whole package name, so name every package exactly`,
+    }));
+}
+
 async function checkBunfig(root: string): Promise<Problem[]> {
   // The same read every other config here gets, in the dialect this one is
   // written in. `Bun.TOML.parse` throws on a malformed file, and a bare throw
@@ -431,13 +520,13 @@ async function checkBunfig(root: string): Promise<Problem[]> {
   const problems: Problem[] = [];
 
   const minimumReleaseAge = install["minimumReleaseAge"];
-  if (typeof minimumReleaseAge !== "number" || minimumReleaseAge <= 0) {
+  if (typeof minimumReleaseAge !== "number" || minimumReleaseAge < MINIMUM_RELEASE_AGE) {
     problems.push({
       file: "bunfig.toml",
-      message:
-        "[install] minimumReleaseAge must hold new releases — a package published minutes ago must not be installable",
+      message: `[install] minimumReleaseAge must hold new releases for at least ${MINIMUM_RELEASE_AGE / DAY} days (${MINIMUM_RELEASE_AGE} seconds), so a compromised release pulled within that time never reaches the lockfile`,
     });
   }
+  problems.push(...checkReleaseAgeExcludes(install["minimumReleaseAgeExcludes"]));
   // `exact`, and not `saveExact`, because `saveExact` is a key bun does not
   // read. Probed as a matched pair on both ends of the range this fleet runs —
   // `bun add lodash` under each key alone, HOME neutralised so no user bunfig
@@ -472,24 +561,53 @@ async function checkBunfig(root: string): Promise<Problem[]> {
  * `commands:` map. A gate that knew only one of them passes a config that
  * declares every hook it asks for and reads none of them.
  */
-function runsOf(entry: unknown): string[] {
+function entriesOf(entry: unknown): ConfigObject[] {
   const node = record(entry);
-  const run = node["run"];
   const nested = record(node["group"])["jobs"];
+  return [node, ...(isList(nested) ? nested.flatMap(entriesOf) : [])];
+}
+
+function hookEntries(hooks: ConfigObject, hook: string): ConfigObject[] {
+  const node = record(hooks[hook]);
+  const jobs = node["jobs"];
   return [
-    ...(typeof run === "string" ? [run] : []),
-    ...(isList(nested) ? nested.flatMap(runsOf) : []),
+    ...Object.values(record(node["commands"])).flatMap(entriesOf),
+    ...(isList(jobs) ? jobs.flatMap(entriesOf) : []),
   ];
 }
 
 function hookRuns(hooks: ConfigObject, hook: string): string[] {
-  const node = record(hooks[hook]);
-  const jobs = node["jobs"];
-  return [
-    ...Object.values(record(node["commands"])).flatMap(runsOf),
-    ...(isList(jobs) ? jobs.flatMap(runsOf) : []),
-  ];
+  return hookEntries(hooks, hook).flatMap(({ run }) => (typeof run === "string" ? [run] : []));
 }
+
+/**
+ * lefthook runs a file as well as a command (a job's `script:`, or a key of the
+ * hook's `scripts:` map, each run by its `runner`), and a hook's `setup:`
+ * commands before either.
+ */
+function hookRunsAnything(hooks: ConfigObject, hook: string): boolean {
+  const node = record(hooks[hook]);
+  const setup = node["setup"];
+  return (
+    Object.keys(record(node["scripts"])).length > 0 ||
+    (isList(setup) && setup.some((step) => typeof record(step)["run"] === "string")) ||
+    hookEntries(hooks, hook).some(
+      ({ run, script }) => typeof run === "string" || typeof script === "string",
+    )
+  );
+}
+
+/**
+ * Every spelling of lefthook's local config that lefthook 2.1.10 merges into
+ * `lefthook.yml` (probed one by one: each ran a pre-push command the main
+ * config did not declare). The main config's other spellings lose to
+ * `lefthook.yml` and are never read beside it.
+ */
+const LOCAL_CONFIGS = ["", ".", ".config/"].flatMap((dir) =>
+  ["yml", "yaml", "toml", "json", "jsonc"].map((ext) => `${dir}lefthook-local.${ext}`),
+);
+
+const READ_ALONE = "the gate reads lefthook.yml alone, so the hooks have to be in it";
 
 async function checkLefthook(root: string): Promise<Problem[]> {
   const lefthook = await readConfig(root, "lefthook.yml", "YAML");
@@ -510,15 +628,22 @@ async function checkLefthook(root: string): Promise<Problem[]> {
     });
   }
 
-  const prePush = hookRuns(hooks, "pre-push");
-  if (!prePush.some((run) => run.includes("typecheck"))) {
+  if (hookRunsAnything(hooks, "pre-push")) {
     problems.push({
       file: "lefthook.yml",
-      message: "pre-push must typecheck, so a green push is a green CI run",
+      message: "pre-push runs nothing; the suite is CI's on the pull request",
     });
   }
-  if (!prePush.some((run) => /\btest\b/.test(run))) {
-    problems.push({ file: "lefthook.yml", message: "pre-push must run the test suite" });
+  for (const key of ["extends", "remotes"]) {
+    if (key in hooks) {
+      problems.push({
+        file: "lefthook.yml",
+        message: `lefthook.yml merges in more config through \`${key}\`; ${READ_ALONE}`,
+      });
+    }
+  }
+  for (const path of await repoFiles(root, LOCAL_CONFIGS)) {
+    problems.push({ file: path, message: `${path} is in the repo; ${READ_ALONE}` });
   }
   return problems;
 }
@@ -585,36 +710,59 @@ async function checkDocs(root: string): Promise<Problem[]> {
 interface Call {
   /** The `with:` block of the job that calls check.yml, or nothing when no job does. */
   readonly asked: ConfigObject | undefined;
+  /**
+   * Every `run:` the workflow's own steps carry, in job order — what this file
+   * says the repo does for itself, as against what it asked the shared workflow
+   * for. Empty where the file is missing or unreadable, which is a workflow
+   * that runs nothing either way.
+   */
+  readonly steps: readonly string[];
   readonly problems: Problem[];
 }
 
+/** Every step of every job that runs something, as the command it runs. */
+function stepsIn(jobs: ConfigObject): string[] {
+  return Object.values(jobs).flatMap((job) => {
+    const steps = record(job)["steps"];
+    if (!isList(steps)) return [];
+    return steps.flatMap((step) => {
+      const run = record(step)["run"];
+      return typeof run === "string" ? [run] : [];
+    });
+  });
+}
+
 /**
- * Read once and handed to everyone who has a question about it. Two rules turn
- * on this file — that the call exists and is pinned, and that a live repo's
- * copy of it asks for the upgrade gate — and they belong to different subjects:
- * one is about the workflow, the other about the lifecycle. Threading a
- * `live` boolean into the first would put the second inside a check that is not
- * about it, and hide the fact that `ci-call` waives both.
+ * Read once and handed to everyone who has a question about it. Three rules turn
+ * on this file — that the call exists and is pinned, that a live repo's copy of
+ * it asks for the upgrade gate, and that a live repo with pages runs its browser
+ * suite somewhere in it — and they belong to different subjects: one is about
+ * the workflow, the other two about the lifecycle. Threading a `live` boolean
+ * into the first would put them inside a check that is not about them, and hide
+ * the fact that `ci-call` waives the pin and the upgrade gate together.
  */
 async function checkCall(root: string): Promise<Call> {
   if (!(await Bun.file(`${root}/${CI_WORKFLOW}`).exists())) {
     return {
       asked: undefined,
+      steps: [],
       problems: [{ file: CI_WORKFLOW, message: "the repo has no CI workflow" }],
     };
   }
 
   const workflow = await readConfig(root, CI_WORKFLOW, "YAML");
   if (workflow.contents === undefined)
-    return { asked: undefined, problems: [...workflow.problems] };
+    return { asked: undefined, steps: [], problems: [...workflow.problems] };
 
   const jobs = record(workflow.contents["jobs"]);
+  const steps = stepsIn(jobs);
   const call = Object.values(jobs)
     .map((job) => record(job))
     .find(({ uses }) => typeof uses === "string" && CHECK_CALL.test(uses));
   if (call === undefined) {
     return {
       asked: undefined,
+      steps,
       problems: [
         {
           file: CI_WORKFLOW,
@@ -624,7 +772,7 @@ async function checkCall(root: string): Promise<Call> {
       ],
     };
   }
-  return { asked: record(call["with"]), problems: [] };
+  return { asked: record(call["with"]), steps, problems: [] };
 }
 
 export interface Contract {
@@ -708,41 +856,64 @@ export async function repoContract(root: string, contract: Contract): Promise<Pr
 
   const declared = declaredIn(rootManifest.value);
 
-  // One read of the workflow, two subjects asking about it — and `ci-call`
-  // waives both, which is a thing to be able to see rather than to discover.
-  // A repo whose CI is not a call into check.yml has no call to pass
-  // `upgrade-gate: true` to.
-  const call = exempt("ci-call") ? { asked: undefined, problems: [] } : await checkCall(root);
+  // One read of the workflow, three subjects asking about it — and `ci-call`
+  // waives two of them, which is a thing to be able to see rather than to
+  // discover. A repo whose CI is not a call into check.yml has no call to pass
+  // `upgrade-gate: true` to. What it does have is steps: the browser suite is a
+  // job the repo runs itself, so the exemption drops the call and keeps them.
+  // It drops the parse problems with the call, so an exempt repo whose ci.yml
+  // is not readable YAML is told to add a job that runs the suite rather than
+  // that its workflow will not parse.
+  const read = await checkCall(root);
+  const call: Call = exempt("ci-call")
+    ? { asked: undefined, steps: read.steps, problems: [] }
+    : read;
 
-  // One read of .oxlintrc.json, two subjects asking about it — where it
-  // inherits from, and whether every switch-off in it carries a reason. Awaited
-  // in the batch rather than before it, so the second subject is a member of
-  // the batch like any other.
+  // One read of .oxlintrc.json, three subjects asking about it — where it
+  // inherits from, whether a Tailwind repo inherits the design-system base, and
+  // whether every switch-off in it carries a reason. The first two ask about
+  // the same `extends` list, so they share one reading of it. Awaited in the
+  // batch rather than before it, so each subject is a member of the batch like
+  // any other.
   const reading = readConfig(root, ".oxlintrc.json");
+  const linting = reading.then((file) => readLintConfig(file, exempt("config-lineage")));
 
   const none = Promise.resolve<Problem[]>([]);
-  const [base, lockfiles, lineage, nested, offReasons, bunfig, lefthook, secrets, docs, live] =
-    await Promise.all([
-      // Nothing else in this batch reads the base ref, and it is the one entry
-      // that spawns a process per question — so it runs beside them rather than
-      // ahead of them.
-      lifecycleAtBase(root, contract.event),
-      checkLockfiles(root),
-      checkLineage(root, rootManifest.value, reading, exempt("config-lineage")),
-      checkNestedConfigs(root),
-      reading.then(checkOffReasons),
-      checkBunfig(root),
-      checkLefthook(root),
-      exempt("secrets") ? none : checkSecrets(root),
-      exempt("docs-spine") ? none : checkDocs(root),
-      declared.is === "live"
-        ? checkLive(root, all.read, {
-            database: contract.database,
-            call: call.asked,
-            dataJobsExternal: contract.dataJobsExternal,
-          })
-        : none,
-    ]);
+  const [
+    base,
+    lockfiles,
+    lineage,
+    designSystem,
+    nested,
+    offReasons,
+    bunfig,
+    lefthook,
+    secrets,
+    docs,
+    live,
+  ] = await Promise.all([
+    // Nothing else in this batch reads the base ref, and it is the one entry
+    // that spawns a process per question — so it runs beside them rather than
+    // ahead of them.
+    lifecycleAtBase(root, contract.event),
+    checkLockfiles(root),
+    checkLineage(root, rootManifest.value, linting, exempt("config-lineage")),
+    linting.then((lint) => checkDesignSystem(all.read, lint, exempt("config-lineage"))),
+    checkNestedConfigs(root),
+    reading.then(checkOffReasons),
+    checkBunfig(root),
+    checkLefthook(root),
+    exempt("secrets") ? none : checkSecrets(root),
+    exempt("docs-spine") ? none : checkDocs(root),
+    declared.is === "live"
+      ? checkLive(root, all.read, {
+          database: contract.database,
+          call: call.asked,
+          steps: call.steps,
+          dataJobsExternal: contract.dataJobsExternal,
+        })
+      : none,
+  ]);
 
   // Spelled out rather than flattened from the batch, because the order is the
   // thing being decided here — it is what a reader of a failing run sees, and
@@ -755,6 +926,7 @@ export async function repoContract(root: string, contract: Contract): Promise<Pr
     ...checkPins(all.read),
     ...lockfiles,
     ...lineage,
+    ...designSystem,
     ...nested,
     ...offReasons,
     ...bunfig,

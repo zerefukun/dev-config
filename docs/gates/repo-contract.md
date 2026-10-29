@@ -5,24 +5,25 @@ Every gate above rests on a string somewhere: a `packageManager` field, an
 deleted, renamed or never written, and when one is, the gate it feeds does not
 fail — it stops existing. `repo-contract` reads them and says so.
 
-| Fact                                                                                                            | Why it is load-bearing                                                                            |
-| --------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------- |
-| `packageManager` reads `bun@<version>`                                                                          | `setup-bun` takes the runner's Bun from it; without it CI and the dev machine drift               |
-| No `package-lock.json` / `pnpm-lock.yaml` / `yarn.lock`                                                         | a second lockfile installs a second dependency tree                                               |
-| Every spec outside `peerDependencies` resolves to one thing                                                     | a lockfile refresh must not be able to change what is installed                                   |
-| Every `peerDependencies` range refuses some version                                                             | a range that accepts everything says what declaring no peer says, and `bun add` writes one        |
-| `typescript` major ≥ 7                                                                                          | the shared tsconfig is written against TypeScript 7                                               |
-| `oxlint-tsgolint` present, when `.oxlintrc.json` extends the base                                               | without it oxlint runs the base's type-aware rules over nothing and reports clean                 |
-| `tsconfig.json` extends this repo, `.oxlintrc.json` extends this repo, the knip config imports `knip.base.ts`   | a repo that stopped inheriting stops inheriting silently                                          |
-| `bunfig.toml` declares `minimumReleaseAge`, `exact`, and a coverage floor a run can fail                        | the supply-chain window and the coverage floor are per-repo copies with no `extends` to hold them |
-| every rule, category and option `.oxlintrc.json` switches off carries a reason above it                         | a switch-off nobody wrote a reason for reads the same as one added to get a run green             |
-| `.oxlintrc.json` `extends` the shared base and nothing else, and no oxlint config sits below the root           | a second config is read after the root's and wins over it, in a file this gate never opens        |
-| `lefthook.yml` runs a staged gitleaks scan pre-commit and typecheck + tests pre-push                            | the hooks are the half of the gate that runs before a push                                        |
-| `.env` untracked and ignored, `.env.example` tracked, neither `.env.example` nor `.env.enc` caught by a pattern | a blanket `.env.*` rule silently deletes the two files that have to ship                          |
-| `CONTEXT.md` (or `CONTEXT-MAP.md`), `CLAUDE.md`                                                                 | the docs spine                                                                                    |
-| `db:migrate` exists, when `database` is anything but `none`                                                     | whichever gate replays this repo's migrations replays them through it                             |
-| a job `uses:` this repo's `check.yml` at a 40-hex SHA                                                           | a tag is a name someone else can repoint                                                          |
-| `lifecycle` reads `"dev"` or `"live"`, and never moves back down                                                | it is what every rule under "Going live" below reconfigures off                                   |
+| Fact                                                                                                              | Why it is load-bearing                                                                              |
+| ----------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------- |
+| `packageManager` reads `bun@<version>`                                                                            | `setup-bun` takes the runner's Bun from it; without it CI and the dev machine drift                 |
+| No `package-lock.json` / `pnpm-lock.yaml` / `yarn.lock`                                                           | a second lockfile installs a second dependency tree                                                 |
+| Every spec outside `peerDependencies` resolves to one thing                                                       | a lockfile refresh must not be able to change what is installed                                     |
+| Every `peerDependencies` range refuses some version                                                               | a range that accepts everything says what declaring no peer says, and `bun add` writes one          |
+| `typescript` major ≥ 7                                                                                            | the shared tsconfig is written against TypeScript 7                                                 |
+| `oxlint-tsgolint` present, when `.oxlintrc.json` extends `oxlint.base.json`                                       | without it oxlint runs the base's type-aware rules over nothing and reports clean                   |
+| `tsconfig.json` extends this repo, `.oxlintrc.json` extends this repo, the knip config imports `knip.base.ts`     | a repo that stopped inheriting stops inheriting silently                                            |
+| `bunfig.toml` declares a window of 3 days or more, exact exclusions, `exact`, and a coverage floor a run can fail | the supply-chain window and the coverage floor are per-repo copies with no `extends` to hold them   |
+| every rule, category and option `.oxlintrc.json` switches off carries a reason above it                           | a switch-off nobody wrote a reason for reads the same as one added to get a run green               |
+| `.oxlintrc.json` `extends` the shared bases and nothing else, each once, and no oxlint config sits below the root | a second config is read after the root's and wins over it, in a file this gate never opens          |
+| `.oxlintrc.json` extends `design-system.base.json`, when any manifest depends on `tailwindcss`                    | without it a page using a raw colour, an arbitrary value or a restyled shared component passes lint |
+| `lefthook.yml` scans staged files with gitleaks pre-commit, runs nothing pre-push, and nothing merges into it     | a committed key is burned, the suite is CI's on the pull request, and the gate reads only that file |
+| `.env` untracked and ignored, `.env.example` tracked, neither `.env.example` nor `.env.enc` caught by a pattern   | a blanket `.env.*` rule silently deletes the two files that have to ship                            |
+| `CONTEXT.md` (or `CONTEXT-MAP.md`), `CLAUDE.md`                                                                   | the docs spine                                                                                      |
+| `db:migrate` exists, when `database` is anything but `none`                                                       | whichever gate replays this repo's migrations replays them through it                               |
+| a job `uses:` this repo's `check.yml` at a 40-hex SHA                                                             | a tag is a name someone else can repoint                                                            |
+| `lifecycle` reads `"dev"` or `"live"`, and never moves back down                                                  | it is what every rule under "Going live" below reconfigures off                                     |
 
 ## What decides which rules run
 
@@ -58,6 +59,16 @@ neither does. A gate asking for the second was asking for a line that pins
 nothing, and that is worse than asking for nothing — the repo carries the field,
 passes this contract, and its next `bun add` writes a range straight past the
 release-age window beside it.
+
+**The window is a floor, and every exclusion names a package.**
+`minimumReleaseAge` has to hold a release for at least 3 days (259200 seconds),
+the fleet's window, and a repo that holds releases longer passes. Each
+`minimumReleaseAgeExcludes` entry has to be a whole package name, because that
+is the only form bun matches: under `"@types/*"`, `"@types/"` and `"@types"`
+alike, `@types/bun` stays held (probed, bun 1.4.0). A pattern there is an
+exemption its author believes in and bun never applies, so the urgent patch it
+was written for still fails to install. A value that is not a list is left to
+bun, which refuses it at every install.
 
 `coveragePathIgnorePatterns` is deliberately not graded, though it can excuse a
 file from the floor as surely as a low threshold can. Each entry is a line in
@@ -116,16 +127,42 @@ are compared, so `"\u006ff\u0066"` is the same switch-off as `"off"`: oxlint
 decodes before it reads a setting, and a gate comparing raw bytes disagrees with
 the linter about the file in front of both of them.
 
-**One config, not a chain of them.** `extends` names the shared base and nothing
-else, and no `.oxlintrc.*` or `oxlint.config.*` may sit below the repository
-root. Both are ways a rule ends up switched off in a file this gate never opens:
-a second `extends` target is read after the base and wins over it, and oxlint
+**One config, not a chain of them.** `extends` names the shared bases and
+nothing else — `oxlint.base.json`, and `design-system.base.json` beside it in a
+Tailwind repo — each once, and no `.oxlintrc.*` or `oxlint.config.*` may sit
+below the repository root. Both are ways a rule ends up switched off in a file
+this gate never opens: a second `extends` target of the repo's own is read after
+the base and wins over it, and so is a copy of a base at another path, and oxlint
 resolves the config nearest the file it is linting, so a config in a
 subdirectory REPLACES the root's rules for that whole subtree rather than adding
 to them — an empty one turns the base off wherever it sits. Neither is followed,
 because a per-directory difference already has a home the gate can read:
-`overrides` in the root config. The `config-lineage` exemption waives _where_ a
-config inherits from and never how many places it inherits from.
+`overrides` in the root config. A base is the file at the path the package
+installs it to, written as README writes it —
+`./node_modules/@gokayo43/dev-config/oxlint.base.json` — and a path that merely
+ends the same way is a copy laid out to look like it. The `config-lineage`
+exemption waives _where_ a config inherits from and never how many places it
+inherits from, so under it a base is recognised by its file name instead. One
+reading of the `extends` list answers every question asked of it here: whether
+it inherits the shared base, whether it names anything else, and whether a
+Tailwind repo reads the design-system base.
+
+**A Tailwind repo reads the design-system base.** A repo whose tree has
+`tailwindcss` in any manifest, under any dependency field, has to name
+`./node_modules/@gokayo43/dev-config/design-system.base.json` in its root
+`.oxlintrc.json`; the diagnostic names the manifests that declare Tailwind and
+what to add. That package is the one every such repo declares whichever plugin
+wires Tailwind into its build — `@tailwindcss/vite` among them — and a name
+rather than a prefix, since `tailwind-merge` is a class-joining helper a repo
+can carry with no Tailwind build at all. A shared component library that states
+Tailwind as a peer owes the base too: its components are written in the classes
+every rule but `no-restyle` reads, and `no-restyle` is the one a repo switches
+off inside its own components directory. No exemption waives the fact:
+`config-lineage` changes where the base may be read from, by its file name as
+for the shared base, and never whether a Tailwind repo reads it. A repo with no
+`tailwindcss` anywhere owes nothing here. What the
+base enforces, and what a repo declares beside it, is
+[README's "Design system"](../../README.md#design-system).
 
 `ignorePatterns` is deliberately not graded, and the honest reason is not that it
 is a different kind of setting — it silences every rule for the paths it names,
@@ -237,11 +274,16 @@ of.
 | `scripts/backup.sh` exists and is executable                             | the repo owns a database, and `data-jobs-external` is empty | an undumped database is one nobody has                                                                                                                          |
 | `scripts/restore-drill.sh` exists and is executable                      | the repo owns a database, and `data-jobs-external` is empty | a backup nobody has restored is a backup nobody has                                                                                                             |
 | a timer/service pair that runs each of them                              | the repo owns a database, and `data-jobs-external` is empty | a script nothing runs on a schedule is one that ran the day it was written (below)                                                                              |
+| `@playwright/test` among what the workspace declares                     | the repo ships a browser surface: `react-dom` or `astro`    | a page nobody opens in CI is one that breaks in front of a user                                                                                                 |
+| a spec written with `@gokayo43/dev-config/invariant-sweep`               | the repo ships a browser surface: `react-dom` or `astro`    | a spec on Playwright's own `test` passes without noticing a console error, an uncaught error or a page scrolling sideways                                       |
+| a `ci.yml` step that runs `playwright test`                              | the repo ships a browser surface: `react-dom` or `astro`    | a suite CI never runs is one that ran the day it was written                                                                                                    |
 
-Only crash reporting is owed by every live repo. The rest is about a database,
-and half this fleet is a static site with a hostname and no schema — demanding a
-backup script of one would teach people to write a script that does nothing in
-order to get past a gate. The upgrade gate is scoped the same way for a harder
+Only crash reporting is owed by every live repo. The rest is scoped to what the
+repo is: the data rules are about a database, and half this fleet is a static
+site with a hostname and no schema — demanding a backup script of one would
+teach people to write a script that does nothing in order to get past a gate.
+The three browser rules are the same shape from the other side, and an API owes
+none of them. The upgrade gate is scoped the same way for a harder
 reason than symmetry: `check.yml` **refuses** `upgrade-gate: true` without
 `database: postgres`, so asking for it there would be this contract demanding
 the one configuration the shared workflow rejects. `external` is that same state
@@ -315,6 +357,63 @@ would fail the first repo on a runtime nobody had thought of. A devDependency
 builds and tests the repo and reaches no deployment, and a peer range states
 what a consumer may bring, so an SDK in either is a repo whose crashes nobody
 hears.
+
+**"Ships a browser surface" is two names, in any dependency field.** The names
+are STACK's web picks: TanStack Start and Vite React both ship `react-dom`, and
+a static site ships `astro`. An Expo app ships `react-native`, and an API or a
+worker ships neither — exactly the set with no page for a browser to open. Names
+rather than a prefix, unlike Sentry's, because `@sentry/astro` is a crash SDK
+and not a page, and `react-native` is a runtime Playwright cannot drive.
+
+Every field, and not the shipped two the crash SDK is read from. That question
+is what a deployment _runs_, so a Sentry SDK in `devDependencies` is a repo
+whose crashes nobody hears; this question is what a browser _opens_, and the
+field says nothing about it — a static site generator builds every page from
+`devDependencies`, and a bundled SPA emits the same artifact whichever field its
+framework was declared in. The cost, named: an Expo app that lists `react-dom`
+for its web target owes the suite from that line, which is right whenever that
+target ships.
+
+A repo that has one owes three separate things, because each is a different file
+to fix. The runner has to be **declared** — `devDependencies` or `dependencies`,
+in any manifest in the workspace. At least one `*.spec.ts` or `*.spec.tsx` has to
+import `@gokayo43/dev-config/invariant-sweep`, which is what makes every page
+its specs visit checked for console errors, uncaught errors and sideways scroll;
+a spec on Playwright's own `test` passes while noticing none of it, and the base
+config's `no-restricted-imports` refuses that import for the same reason. And
+`ci.yml` has to run the suite.
+
+How many flows the suite has is deliberately not graded. E2E is few and
+structural (testing.md), so a floor on flow count would be this gate asking for
+the opposite of the rule it derives from.
+
+**Running the suite is read out of the workflow's own steps, and this is the
+one rule that reads them.** Everything else about `ci.yml` is read off the call
+into `check.yml`, because a repo can write the words of a gate in a comment and
+only the call is the fact. There is no call to read here and no input that would
+help: `check.yml`'s only app-booting job is the database job, which never runs
+for the static sites this rule is mostly about, and a browser suite needs _this_
+repo's app booted with _its_ browsers against _its_ fixtures. The run is a job
+the repo owns, so the job is where the fact is.
+
+Which is why the reading is careful. A `run:` block is read as a shell reads it
+— as commands split at newlines, `;`, `|` and `&`, each with a head, `#` ending
+its line — and the program counts only at a command's head, after any leading
+`KEY=value`, with `bunx` and `bun x` as the one wrapper before it. A step counts
+when a command runs `playwright test` (directly, wrapped, or out of
+`node_modules/.bin`) or runs a package script that reaches it: `bun run
+<script>` in the root manifest, `--cwd <dir>` in that directory's, `--filter` /
+`-F` and `turbo run <task>` in whichever workspace declares it — each
+value-taking flag consumed with its value in both spellings, since a value read
+as a bare word IS the script name. Script chains are followed (`e2e` runs
+`test:e2e:ci` runs the binary) and a script that calls itself terminates rather
+than recursing.
+
+None of that is pedantry: the ordinary Playwright job installs a browser and
+prints advice about the binary. `playwright install --with-deps chromium`, `echo
+"run playwright test to reproduce"` and a `#` line all carry the words and run
+no suite, and a script whose _name_ carries the word runs whatever its command
+says.
 
 ### A scheduled job is three files
 
@@ -417,9 +516,9 @@ as well, and the two are compared:
 | `live`   | absent    | refused — the same edit, less visible      |
 
 Writing `dev` over `live`, or deleting the field, sheds backups, a rehearsed
-restore, crash reporting and the upgrade gate in one edit that reviews as a
-whitespace change. Deleting the manifest outright is refused a line earlier, by
-the rule that a repo has a `package.json` at all.
+restore, crash reporting, the swept browser suite and the upgrade gate in one
+edit that reviews as a whitespace change. Deleting the manifest outright is
+refused a line earlier, by the rule that a repo has a `package.json` at all.
 
 The base ref is the merge base with the branch a pull request targets, or the
 tip a push had before — the same resolution [the upgrade

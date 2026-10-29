@@ -1,8 +1,16 @@
 {
   "$schema": "https://raw.githubusercontent.com/oxc-project/oxc/main/npm/oxlint/configuration_schema.json",
-  "extends": ["./oxlint.base.json"],
+  "extends": ["./oxlint.base.json", "./design-system.base.json"],
   "env": { "node": true, "es2024": true },
-  "ignorePatterns": ["node_modules/**", ".claude/**", ".github/actions/db-gate/capacity.js"],
+  // `dist/**` is what `bun run build` writes from the three exports a node runner
+  // imports; linting a build is linting its inputs twice, and every rule that
+  // reads types reads none there.
+  "ignorePatterns": [
+    "node_modules/**",
+    ".claude/**",
+    "dist/**",
+    ".github/actions/db-gate/capacity.js"
+  ],
   "rules": {
     // One of the base's own rules, off here and nowhere else. Every gate in
     // this repo reads a file it does not own — another repo's package.json,
@@ -17,6 +25,9 @@
     {
       "files": [
         "dev-server.ts",
+        "property.ts",
+        "invariant-sweep.ts",
+        "count-budget.ts",
         ".github/actions/_lib/gate.ts",
         ".github/actions/db-gate/database.ts",
         ".github/actions/db-gate/probe.ts",
@@ -29,13 +40,23 @@
         // dev server it spawns. There is no `env.ts` above a bin for either to
         // come from.
         //
-        // `gate.ts` is this repo's `env.ts` under another name, and the only
-        // other file here that reads a variable for its value: `inputs()` and
-        // `required()` are the choke point the rule asks for, and both throw
-        // rather than default. The other three forward the environment they
-        // were started with to a child process — `{ ...process.env, DATABASE_URL }`
-        // — which reads no variable and has none to validate. Named one file at
-        // a time so a fifth reader fails rather than joining a glob.
+        // `property.ts` is a module a consuming repo imports, so the `env.ts`
+        // the rule points at is that repo's and cannot be reached from here:
+        // the run's property budget arrives as two variables because a workflow
+        // step has no other way to reach a `bun test`, and this is the one call
+        // every property goes through to read them. `invariant-sweep.ts` is the
+        // same case for the video switch: the run that wants a recording is a
+        // `playwright test` someone starts by hand, and the fixture every spec
+        // imports is the one place it is read. `count-budget.ts` is that case
+        // again for the switch that writes ceilings instead of checking them.
+        //
+        // `gate.ts` is this repo's `env.ts` under another name: `inputs()` and
+        // `required()` are the choke point the rule asks for. Each of those
+        // readers throws on a value it cannot read rather than defaulting. The
+        // rest of the files forward the environment they were started with to a
+        // child process — `{ ...process.env, DATABASE_URL }` — which reads no
+        // variable and has none to validate. Named one file at a time so a new
+        // reader fails rather than joining a glob.
         "anti-slop/no-env-access": "off"
       }
     }

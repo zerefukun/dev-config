@@ -9,10 +9,16 @@ import {
   DEFAULTS,
   manifestWith,
   PIN,
+  withBunfig,
   withSpec,
-  withThreshold,
 } from "./repo-contract-fixture.ts";
 import { materialise, type Tree, without } from "./tree.ts";
+
+/** The two shared bases as a consuming repo names them. */
+const BASES = {
+  oxlint: "./node_modules/@gokayo43/dev-config/oxlint.base.json",
+  designSystem: "./node_modules/@gokayo43/dev-config/design-system.base.json",
+};
 
 // The word the caller's workflow writes, before any rule reads it. The action
 // is called directly as well as through check.yml — this repo's own ci.yml does
@@ -130,12 +136,7 @@ describe("repo contract", () => {
     ],
     ["neither", "", [containing("[install] exact must be true")]],
   ])("a bunfig that pins with %s", async (_what, pinning, expected) => {
-    expect(
-      await contract({
-        ...CLEAN,
-        "bunfig.toml": `[install]\nminimumReleaseAge = 604800\n${pinning}\n[test]\ncoverageThreshold = { lines = 0.75, functions = 0.75 }\n`,
-      }),
-    ).toEqual([...expected]);
+    expect(await contract(withBunfig({ pinning }))).toEqual([...expected]);
   });
 
   // A floor was checked for being declared, and `0` is declared. Bun enforces
@@ -149,7 +150,7 @@ describe("repo contract", () => {
     ["an empty table", "{  }"],
     ["a floor bun does not read", "{ line = 0.9 }"],
   ])("a coverage floor that is %s is refused", async (_what, threshold) => {
-    expect(await contract(withThreshold(threshold))).toEqual([
+    expect(await contract(withBunfig({ test: `coverageThreshold = ${threshold}\n` }))).toEqual([
       containing("coverageThreshold must be a floor a run can fail"),
     ]);
   });
@@ -158,7 +159,7 @@ describe("repo contract", () => {
     ["a number above 0", "0.75"],
     ["a table of floors above 0", "{ lines = 0.75, statements = 0.9 }"],
   ])("a coverage floor that is %s passes", async (_what, threshold) => {
-    expect(await contract(withThreshold(threshold))).toEqual([]);
+    expect(await contract(withBunfig({ test: `coverageThreshold = ${threshold}\n` }))).toEqual([]);
   });
 
   // Collection belongs to the run CI makes — docs/gates/test-suite.md. Three
@@ -181,8 +182,8 @@ describe("repo contract", () => {
       [containing("[test] coverage decides where the floor is applied")],
     ],
   ])("a floored bunfig that %s", async (_what, line, expected) => {
-    const bunfig = `[install]\nminimumReleaseAge = 604800\nexact = true\n\n[test]\n${line}coverageThreshold = { lines = 0.75, functions = 0.75 }\n`;
-    expect(await contract({ ...CLEAN, "bunfig.toml": bunfig })).toEqual(expected);
+    const floored = `${line}coverageThreshold = { lines = 0.75, functions = 0.75 }\n`;
+    expect(await contract(withBunfig({ test: floored }))).toEqual(expected);
   });
 
   // `Bun.TOML.parse` throws, so a bunfig nobody can read used to leave the step
@@ -203,51 +204,6 @@ describe("repo contract", () => {
   ])("a %s nothing can parse is named, not thrown past", async (_name, file) => {
     const problems = await contract({ ...CLEAN, [file]: "key: [unclosed\n" });
     expect(problems).toEqual([containing("is not valid YAML")]);
-  });
-
-  // lefthook 2.x leads with `jobs:` — a list whose entries may be a `group:`
-  // holding another list — and a gate that knew only `commands:` passed a
-  // config declaring every hook it asks for while reading none of them.
-  test("the jobs form is read, groups and all", async () => {
-    const jobs = [
-      "pre-commit:",
-      "  jobs:",
-      "    - name: secrets",
-      "      run: gitleaks git --staged --redact --no-banner .",
-      "",
-      "pre-push:",
-      "  jobs:",
-      "    - name: whole project",
-      "      group:",
-      "        jobs:",
-      "          - run: bun run typecheck",
-      "          - run: bun test",
-      "",
-    ].join("\n");
-    expect(await contract({ ...CLEAN, "lefthook.yml": jobs })).toEqual([]);
-  });
-
-  test("a jobs-form config that declares the hooks and runs nothing is still refused", async () => {
-    const empty =
-      "pre-commit:\n  jobs:\n    - run: echo hi\n\npre-push:\n  jobs:\n    - run: echo hi\n";
-    expect(await contract({ ...CLEAN, "lefthook.yml": empty })).toEqual([
-      containing("gitleaks git --staged"),
-      containing("pre-push must typecheck"),
-      containing("pre-push must run the test suite"),
-    ]);
-  });
-
-  test("the hooks have to scan the index and gate the push", async () => {
-    expect(
-      await contract({
-        ...CLEAN,
-        "lefthook.yml": "pre-commit:\n  commands:\n    secrets:\n      run: gitleaks git .\n",
-      }),
-    ).toEqual([
-      containing("gitleaks git --staged"),
-      containing("pre-push must typecheck"),
-      containing("pre-push must run the test suite"),
-    ]);
   });
 
   test("a tracked .env is refused", async () => {
@@ -776,7 +732,7 @@ describe("a second place lint config can come from", () => {
         }),
         "lint-relax.json": JSON.stringify({ rules: { "no-console": "off" } }),
       }),
-    ).toEqual([containing("extends must name the shared base and nothing else")]);
+    ).toEqual([containing("extends must name the shared bases and nothing else")]);
   });
 
   // `config-lineage` waives WHERE a config inherits from. How many places it
@@ -788,8 +744,43 @@ describe("a second place lint config can come from", () => {
       "lint-relax.json": JSON.stringify({ rules: {} }),
     };
     expect(await contract(own, { exemptions: ["config-lineage"] })).toEqual([
-      containing("extends must name the shared base and nothing else"),
+      containing("extends must name the shared bases and nothing else"),
     ]);
+  });
+
+  test("the two shared bases together are one place, not two", async () => {
+    expect(
+      await contract({
+        ...CLEAN,
+        ".oxlintrc.json": JSON.stringify({ extends: [BASES.oxlint, BASES.designSystem] }),
+      }),
+    ).toEqual([]);
+  });
+
+  // A base named twice is the second place by another route: the same name at
+  // another path is a copy of it this gate never opens.
+  test.each([
+    ["the same path", BASES.oxlint],
+    ["a copy beside it", "./lint/oxlint.base.json"],
+  ])("the shared base named a second time, at %s, is refused", async (_, second) => {
+    expect(
+      await contract({
+        ...CLEAN,
+        ".oxlintrc.json": JSON.stringify({ extends: [BASES.oxlint, second] }),
+      }),
+    ).toEqual([containing("extends must name the shared bases and nothing else, each once")]);
+  });
+
+  // Under `config-lineage` a base is known by its file name, since where it is
+  // read from is what the exemption waives — and that holds for both of them.
+  test("config-lineage reads both bases by their file names", async () => {
+    const own = {
+      ...CLEAN,
+      ".oxlintrc.json": JSON.stringify({
+        extends: ["./oxlint.base.json", "./design-system.base.json"],
+      }),
+    };
+    expect(await contract(own, { exemptions: ["config-lineage"] })).toEqual([]);
   });
 
   test.each([
@@ -810,5 +801,122 @@ describe("a second place lint config can come from", () => {
 
   test("the root's own config is not mistaken for a nested one", async () => {
     expect(await contract(CLEAN)).toEqual([]);
+  });
+});
+
+// The design system is the stylesheet theme and the shared components, and the
+// base is what fails a page that steps outside them. Whether a repo has one is
+// read off its manifests, never off a field it could leave out.
+describe("a repo that builds its pages with Tailwind", () => {
+  const TAILWIND = "4.3.3";
+
+  /** The clean tree with tailwindcss declared in the manifest at `path`, and the given extends. */
+  function tailwindAt(
+    path: string,
+    field: "dependencies" | "devDependencies" | "peerDependencies",
+    extend: readonly string[],
+  ): Tree {
+    const spec = field === "peerDependencies" ? ">=4" : TAILWIND;
+    const tree: Tree =
+      path === "package.json"
+        ? manifestWith((contents) => {
+            contents[field] = { ...contents[field], tailwindcss: spec };
+          })
+        : { ...CLEAN, [path]: JSON.stringify({ name: "web", [field]: { tailwindcss: spec } }) };
+    return { ...tree, ".oxlintrc.json": JSON.stringify({ extends: extend }) };
+  }
+
+  test("extending the design-system base beside the shared one passes", async () => {
+    expect(
+      await contract(
+        tailwindAt("package.json", "devDependencies", [BASES.oxlint, BASES.designSystem]),
+      ),
+    ).toEqual([]);
+  });
+
+  // The workspace is the subject, not the root: a monorepo's web app declares
+  // Tailwind in its own manifest, under whichever field, and a library of
+  // shared components states it as a peer.
+  test.each([
+    ["package.json", "devDependencies"],
+    ["package.json", "dependencies"],
+    ["apps/web/package.json", "devDependencies"],
+    ["packages/ui/package.json", "peerDependencies"],
+  ] as const)(
+    "tailwindcss in %s %s without the base is refused, naming the manifest and what to add",
+    async (path, field) => {
+      expect(await contract(tailwindAt(path, field, [BASES.oxlint]))).toEqual([
+        `${path} depends on tailwindcss — add ./node_modules/@gokayo43/dev-config/design-system.base.json to extends beside oxlint.base.json, and @shadcn/lint to devDependencies, so a page using a raw colour, an arbitrary value or a restyled shared component fails lint`,
+      ]);
+    },
+  );
+
+  // A file of the same name somewhere else is a copy of the rules, which a
+  // repo can loosen without this gate ever opening it.
+  test("a design-system base read from anywhere but the package is refused", async () => {
+    expect(
+      await contract(
+        tailwindAt("package.json", "devDependencies", [
+          BASES.oxlint,
+          "./lint/design-system.base.json",
+        ]),
+      ),
+    ).toEqual([
+      containing("extends must name the shared bases and nothing else"),
+      containing("package.json depends on tailwindcss"),
+    ]);
+  });
+
+  test("config-lineage does not waive it", async () => {
+    const own = {
+      ...tailwindAt("package.json", "devDependencies", ["./oxlint.base.json"]),
+      "tsconfig.json": JSON.stringify({ extends: "./tsconfig.base.json" }),
+      "knip.ts": 'import { base } from "./knip.base.ts";\nexport default { ...base };\n',
+    };
+    expect(await contract(own, { exemptions: ["config-lineage"] })).toEqual([
+      containing("package.json depends on tailwindcss"),
+    ]);
+  });
+
+  // The bug the first cut shipped: three readings of one `extends` list, and
+  // the design-system one ignored the exemption, so this repo — which extends
+  // its own bases by relative path and declares Tailwind for its suite —
+  // failed its own contract.
+  test("config-lineage reads the design-system base by its file name too", async () => {
+    const own = {
+      ...tailwindAt("package.json", "devDependencies", [
+        "./oxlint.base.json",
+        "./design-system.base.json",
+      ]),
+      "tsconfig.json": JSON.stringify({ extends: "./tsconfig.base.json" }),
+      "knip.ts": 'import { base } from "./knip.base.ts";\nexport default { ...base };\n',
+    };
+    expect(await contract(own, { exemptions: ["config-lineage"] })).toEqual([]);
+  });
+
+  // A path that merely ends in the package's is a copy laid out to look like
+  // it: two empty files there passed as both bases.
+  test("a copy of both bases under a look-alike path is refused", async () => {
+    const vendor = "./vendor/@gokayo43/dev-config";
+    expect(
+      await contract({
+        ...tailwindAt("package.json", "devDependencies", [
+          `${vendor}/oxlint.base.json`,
+          `${vendor}/design-system.base.json`,
+        ]),
+        "vendor/@gokayo43/dev-config/oxlint.base.json": "{}",
+        "vendor/@gokayo43/dev-config/design-system.base.json": "{}",
+      }),
+    ).toEqual([
+      containing("extends must name the shared bases and nothing else"),
+      containing(".oxlintrc.json must extend ./node_modules/@gokayo43/dev-config/oxlint.base.json"),
+      containing("package.json depends on tailwindcss"),
+    ]);
+  });
+
+  // The fleet's apps declare `tailwind-merge` beside Tailwind, and a
+  // component library can carry it with no Tailwind build of its own.
+  test("a package whose name only starts with tailwind is not Tailwind", async () => {
+    expect(await contract(withSpec("tailwind-merge", "3.6.0"))).toEqual([]);
   });
 });

@@ -2,8 +2,8 @@
  * The E2E invariant sweep testing.md asks of every visited page, as a Playwright
  * fixture a repo imports instead of `@playwright/test`'s own `test`:
  *
- *   no page logged a `console.error`, no page threw, and no page scrolled
- *   sideways.
+ *   no page logged a `console.error`, no page threw, no page scrolled
+ *   sideways, and nothing on a page moved that the user did not move.
  *
  * They are invariants rather than assertions because no single test owns them.
  * A flow test knows what it came to click; nobody's job is to notice that the
@@ -17,7 +17,8 @@
  *
  * The console and the page's own errors arrive as events, so those are the easy
  * half. Overflow is a measurement, and a measurement has to happen somewhere,
- * at some moment. Two designs that do not work:
+ * at some moment; a layout shift is an entry the browser hands only to an
+ * observer that was in the page when it happened. Two designs that do not work:
  *
  * - **After each `goto`.** A test that navigates by clicking a link never calls
  *   `goto`, and those pages would go unswept while the fixture claimed to sweep
@@ -41,28 +42,68 @@
  * like any other. A `page` fixture cannot see those at all: they are pages the
  * context opened and the spec may never name.
  *
- * ## What the page is allowed to say about itself
+ * ## What a page can do to the verdict
  *
- * A page is not a trusted narrator. The bridge takes **one string** from it and
- * nothing else: the `kind` is always `overflow`, and the URL is the one
- * Playwright says that frame is at. Reports from anything but the top frame are
- * dropped, so a cross-origin iframe cannot invent a violation for the page
- * carrying it, and the string itself is stripped of control characters — which
- * is what stops an embed writing ANSI escapes or a `::error::` workflow command
- * into somebody's CI annotation.
+ * The export's page, `docs/exports/invariant-sweep.md`, says it under "What a
+ * page is allowed to say about itself", and that is the one place it is said.
  *
- * The same reasoning decides which URL a console error is attributed to. The
- * console reports the script's URL, and a script's URL is whatever its
- * `//# sourceURL=` comment claims — so an inline script of ours can wear a
- * vendor's name and land in the vendor's allowlist bucket. A claimed URL is
- * therefore honoured only when a document or script **actually loaded** from it
- * in this page, which is a fact about responses the browser received and not
- * one any page can write.
+ * ## Recording
+ *
+ * `E2E_VIDEO=on` turns Playwright's own `video` option on for the run, over
+ * whatever the config says. The export's page, `docs/exports/invariant-sweep.md`,
+ * has the switch under "Recording a video".
  */
-import { expect, type Page, test as base } from "@playwright/test";
+import {
+  type Browser,
+  type ElementHandle,
+  expect,
+  type Locator,
+  type Page,
+  type PlaywrightTestArgs,
+  type PlaywrightTestOptions,
+  type PlaywrightWorkerArgs,
+  type PlaywrightWorkerOptions,
+  // oxlint-disable-next-line eslint/no-restricted-imports -- the one import the base's ban points at: this module is what wraps `test`, so the fixture every spec is told to use has to reach the fixture it wraps
+  test as base,
+  type TestType,
+} from "@playwright/test";
 
 /** The name the page-side script calls, and the name the fixture exposes. One constant, two ends. */
 const REPORTER = "__invariantSweep";
+
+/** The name the page-side drain answers to, and the name the fixture calls. One constant, two ends. */
+const DRAINER = "__invariantSweepDrain";
+
+/** The name the page-side act mark answers to, and the name the fixture calls. One constant, two ends. */
+const ACTOR = "__invariantSweepActing";
+
+/**
+ * How long after the user acts a layout shift is still theirs, in ms: the
+ * window the Layout Instability spec sets `hadRecentInput` by, which the
+ * fixture applies after each action it marks as well.
+ */
+const RECENT = 500;
+
+/** The calls that replace a page's document, each drained first. */
+const REPLACING = ["goto", "reload", "goBack", "goForward", "setContent"] as const;
+
+/** The actions Playwright performs with nothing the browser counts as input, each marked as the user acting. */
+const UNPROMPTED = ["fill", "selectOption", "setInputFiles"] as const;
+
+/**
+ * How long a document has to go unchanged before it has nothing further to
+ * report, in ms. Playwright calls a page idle after 500ms with no network
+ * activity, which is the same judgement about the same kind of page; this
+ * applies it to the DOM.
+ */
+const QUIET = 500;
+
+/**
+ * How long a document that never armed — one whose `load` or whose fonts never
+ * arrive — is waited out, in ms: the 5s Playwright's own `expect` gives a page
+ * to come good.
+ */
+const CAP = 5_000;
 
 /** How far past the viewport an element has to reach before it counts, in CSS pixels. */
 const SLACK = 1;
@@ -80,30 +121,83 @@ const OFFENDERS = 3;
 /** How much of a page's own sentence reaches the failure message. */
 const DETAIL_LIMIT = 300;
 
-/** What Playwright says when the page navigated out from under an evaluate. */
-const DESTROYED = "Execution context was destroyed";
+/**
+ * What Playwright says when there is no longer anything to evaluate in: the
+ * first when the page navigated out from under the call, the second when the
+ * page — a popup that closed itself, say — or the whole context has gone.
+ */
+const GONE = [
+  "Execution context was destroyed",
+  "Target page, context or browser has been closed",
+] as const;
 
 /** The resource kinds whose URLs a violation may be attributed to. */
 const ADDRESSABLE = new Set(["document", "script"]);
 
+/** The variable that switches recording on. */
+const RECORD = "E2E_VIDEO";
+
+/**
+ * Whether this run records a video of every page in the context, read once
+ * from the environment. Unset or blank leaves `video` to the config, as a blank
+ * budget does in `property.ts`; anything but `on` throws, because a misspelt
+ * switch read as off is a run that was asked for a recording, went green, and
+ * left nothing to watch.
+ */
+function recordingAsked(): boolean {
+  const written = (process.env[RECORD] ?? "").trim();
+  if (written === "") return false;
+  if (written === "on") return true;
+  throw new Error(
+    `${RECORD} is ${JSON.stringify(written)}, and the one value it takes is "on", which records a video of every page in the test's own context; unset it, or leave it blank, to leave \`video\` to the Playwright config`,
+  );
+}
+
+const RECORDING = recordingAsked();
+
+/** The config's `video`, switched on when the run asked for a recording, and the rest of it kept. */
+function recorded(video: PlaywrightWorkerOptions["video"]): PlaywrightWorkerOptions["video"] {
+  if (!RECORDING) return video;
+  return typeof video === "string" ? "on" : { ...video, mode: "on" };
+}
+
+/** The violations the page measures for itself, which are the only kinds it may name over the bridge. */
+const MEASURED = ["overflow", "layout-shift"] as const;
+
+type Measured = (typeof MEASURED)[number];
+
+function measured(kind: unknown): kind is Measured {
+  return MEASURED.some((each) => each === kind);
+}
+
 /** One invariant, broken once. */
 interface Violation {
-  readonly kind: "console.error" | "pageerror" | "overflow";
+  readonly kind: "console.error" | "pageerror" | Measured;
   /**
-   * Where it came *from*: the script's URL for a console error, the frame's for
-   * everything else — and only ever a URL the browser reported loading. The
-   * source rather than the page, because the case the allowlist exists for is a
-   * third-party embed on a page of ours.
+   * Where it came *from*: the script's URL for a console error or a thrown
+   * error, the frame's for overflow and for a layout shift — and only ever a URL
+   * the browser reported loading. The source rather than the page, because the
+   * case the allowlist exists for is a third-party embed on a page of ours.
    */
   readonly at: string;
   readonly detail: string;
 }
 
 /**
- * Two frames, as an expression rather than a function for the same reason
- * `WATCH` is one: there is no DOM lib here to type `requestAnimationFrame` with.
+ * Asking the document to drain, as an expression rather than a function for the
+ * same reason `watch` writes source: there is no DOM lib here to type it with.
+ *
+ * It gives one document its last chance to report before it is replaced or the
+ * test ends. A document can be behind in two ways, and one ask covers both. It
+ * may not have *measured* yet: a page that lays its overflow out on a timer
+ * after `load` has nothing to say when `goto` resolves, and a spec that
+ * navigates on that instant destroys the document before the layout it would
+ * have failed on. And it may have measured without the report having
+ * *crossed*: a report leaves on the frame after the check runs, so two frames
+ * follow the wait. `watch` owns what each of those costs and answers when both
+ * are spent.
  */
-const FLUSH = "new Promise((done) => requestAnimationFrame(() => requestAnimationFrame(done)))";
+const DRAIN = `window.${DRAINER}()`;
 
 /**
  * The measuring, as source rather than as a function, for two reasons that both
@@ -120,10 +214,60 @@ const FLUSH = "new Promise((done) => requestAnimationFrame(() => requestAnimatio
  * route change that fires no `load` at all. The top frame only: an iframe
  * scrolling sideways inside its own box is the embed's business, and
  * `documentElement` there is not the page.
+ *
+ * The same four moments are what draining waits on, and the document owns that
+ * too: it is asked, and it answers when it has nothing further to report. The
+ * runner holds no clock and no promise per document, so there is nothing for a
+ * same-document navigation or a page closing itself to orphan — the state is in
+ * the document, and it goes when the document does.
+ *
+ * Three ways to have nothing further to report, and a document reaches whichever
+ * comes first. It has **gone quiet**: armed — loaded, with its fonts swapped in,
+ * the last two reflows anything schedules for it — and `QUIET` since the last of
+ * the four moments. It has been **changing without pause** since it armed for
+ * twice that, which is an animation: it is measured on every one of those
+ * changes, so waiting for a gap that will not come buys nothing. Or it **never
+ * armed** at all, and `CAP` has passed since the script ran.
+ *
+ * Layout shifts are not measured at those moments: the browser hands each one
+ * to the observer as an entry, from the first frame the document paints, and
+ * every entry is a violation unless the user caused it. The browser says so by
+ * marking it `hadRecentInput`; the fixture says so for an `UNPROMPTED` action
+ * by calling `ACTOR` with the action's own id as it starts and as it returns.
+ * An entry is the action's when it starts between the action's own input and
+ * `RECENT` after its return. Its own input is the last `input` or `change`
+ * event of its run: the last trusted one, which only the browser's own input
+ * path makes and `fill` takes, or failing one the last of any kind, since
+ * `selectOption` and `setInputFiles` dispatch theirs from script; or its return
+ * if it set off none. The last rather than the first, because what comes before
+ * an action's own input, a page's own dispatch while the action waits for its
+ * element or another action's input, is not this action's. An entry observed
+ * while any action runs is held until they all return, because its windows are
+ * not known before then; any other is judged as it is observed.
+ *
+ * The reporter is read once, here, so a page that later replaces the global
+ * does not replace where its reports go.
  */
 const WATCH = `(() => {
   if (window.top !== window) return;
+  // A <noscript> parses its content as text only where scripting is enabled
+  // for the document. Where it is not, a document sandboxed without scripts,
+  // the browser calls back nothing this script schedules and logs an error for
+  // each attempt, so the script answers at once and does nothing else.
+  const probe = document.createElement("noscript");
+  probe.innerHTML = "<i></i>";
+  if (probe.firstChild.nodeType !== Node.TEXT_NODE) {
+    window.${DRAINER} = () => undefined;
+    window.${ACTOR} = () => undefined;
+    return;
+  }
+  const report = window.${REPORTER};
   const seen = new Set();
+  const say = (kind, key, detail) => {
+    if (seen.has(kind + " " + key)) return;
+    seen.add(kind + " " + key);
+    report(kind, detail);
+  };
   const describe = (el) => {
     const id = el.id ? "#" + el.id : "";
     const names = typeof el.className === "string" ? el.className.trim() : "";
@@ -142,19 +286,107 @@ const WATCH = `(() => {
     const named = (innermost.length ? innermost : past).slice(0, ${OFFENDERS}).map(describe).join(", ");
     const detail = root.scrollWidth + "px of content in a " + limit + "px viewport"
       + (named ? ", reaching past the right edge: " + named : "");
-    if (seen.has(detail)) return;
-    seen.add(detail);
-    window.${REPORTER}(detail);
+    say("overflow", detail, detail);
   };
+  const started = performance.now();
+  let armed = 0;
+  let changed = 0;
   let queued = false;
   const soon = () => {
+    changed = performance.now();
     if (queued) return;
     queued = true;
     requestAnimationFrame(() => { queued = false; check(); });
   };
-  if (document.fonts) document.fonts.ready.then(soon);
-  if (document.readyState === "complete") soon();
-  else window.addEventListener("load", soon);
+  const fonts = document.fonts ? document.fonts.ready : Promise.resolve();
+  const loaded = document.readyState === "complete"
+    ? Promise.resolve()
+    : new Promise((done) => window.addEventListener("load", done, { once: true }));
+  fonts.then(soon);
+  loaded.then(soon);
+  Promise.all([fonts, loaded]).then(() => { armed = performance.now(); soon(); });
+  const until = () => armed === 0
+    ? started + ${CAP}
+    : Math.min(Math.max(changed, armed) + ${QUIET}, armed + ${QUIET * 2});
+  const named = (source) => {
+    const node = source.node && source.node.nodeType !== Node.ELEMENT_NODE
+      ? source.node.parentElement
+      : source.node;
+    return node ? describe(node) : "an element no longer in the page";
+  };
+  const travel = (source) => {
+    const from = source.previousRect;
+    const to = source.currentRect;
+    if (from.width * from.height === 0) return "into view";
+    if (to.width * to.height === 0) return "out of view";
+    const dy = Math.round(to.y - from.y);
+    const dx = Math.round(to.x - from.x);
+    const legs = [];
+    if (dy !== 0) legs.push(Math.abs(dy) + "px " + (dy > 0 ? "down" : "up"));
+    if (dx !== 0) legs.push(Math.abs(dx) + "px " + (dx > 0 ? "right" : "left"));
+    return legs.length ? legs.join(" and ") : "by less than a pixel";
+  };
+  const marks = [];
+  const held = [];
+  const running = new Map();
+  const judge = (entry) => {
+    if (marks.some(({ from, to }) => entry.startTime >= from && entry.startTime <= to + ${RECENT})) return;
+    const sources = entry.sources.slice(0, ${OFFENDERS});
+    const score = "score " + entry.value.toFixed(4);
+    const moved = sources.length
+      ? sources.map((source) => named(source) + " moved " + travel(source)).join(", ")
+      : "something moved";
+    say("layout-shift", sources.length ? sources.map(named).join(", ") : score,
+      score + ", with no input in the ${RECENT}ms before: " + moved);
+  };
+  window.${ACTOR} = (edge, id) => {
+    if (edge === "start") return void running.set(id, { trusted: undefined, any: undefined });
+    const now = performance.now();
+    // Undefined for an action that replaced the document: it ends in one it never started in.
+    const action = running.get(id);
+    running.delete(id);
+    marks.push({ from: (action && (action.trusted ?? action.any)) ?? now, to: now });
+    if (running.size === 0) held.splice(0).forEach(judge);
+  };
+  for (const type of ["input", "change"]) {
+    window.addEventListener(type, (event) => {
+      for (const action of running.values()) {
+        action.any = event.timeStamp;
+        if (event.isTrusted) action.trusted = event.timeStamp;
+      }
+    }, true);
+  }
+  const shifted = (entries) => {
+    for (const entry of entries) {
+      if (entry.hadRecentInput) continue;
+      if (running.size > 0) held.push(entry);
+      else judge(entry);
+    }
+  };
+  // Firefox and WebKit have no Layout Instability API, and observing a type a
+  // browser lacks logs a warning rather than throwing.
+  const shifts = PerformanceObserver.supportedEntryTypes.includes("layout-shift")
+    ? new PerformanceObserver((list) => shifted(list.getEntries()))
+    : undefined;
+  if (shifts) shifts.observe({ type: "layout-shift", buffered: true });
+  // An observer is called some time after the frame a shift happened in, and a
+  // document on its way out is not called again.
+  const flush = () => {
+    if (shifts) shifted(shifts.takeRecords());
+    held.splice(0).forEach(judge);
+  };
+  window.addEventListener("pagehide", flush);
+  window.${DRAINER} = () => new Promise((done) => {
+    const wait = () => {
+      const left = until() - performance.now();
+      // Capped, so that a document arming mid-wait is noticed rather than slept
+      // through: once armed, the deadline is never further off than this.
+      if (left > 0) return void setTimeout(wait, Math.min(left, ${QUIET}));
+      flush();
+      requestAnimationFrame(() => requestAnimationFrame(done));
+    };
+    wait();
+  });
   // Capture phase: a subresource's own load event does not bubble, and an
   // image's bytes are what carry its width.
   document.addEventListener("load", soon, true);
@@ -171,11 +403,12 @@ const WATCH = `(() => {
 /** The option a repo sets, declared so `test.use({ sweepAllowlist })` type-checks. */
 export interface InvariantSweep {
   /**
-   * URLs whose console errors, page errors and overflow this run tolerates,
-   * each against the reason it is tolerated. The key is a **regular
-   * expression** tested against the URL, and it is **unanchored** — `"/checkout"`
-   * also matches `/checkout-v2`, so write `"/checkout$"` when a page name is
-   * meant. The value is why, which is the half a reviewer reads.
+   * Violations this run tolerates, keyed on the URL each came from: the
+   * script's for a console error or a thrown error, the page's for overflow and
+   * a layout shift. Each key is against the reason it is tolerated. The key is
+   * a **regular expression** tested against that URL, and it is **unanchored**
+   * — `"/checkout"` also matches `/checkout-v2`, so write `"/checkout$"` when a
+   * page name is meant. The value is why, which is the half a reviewer reads.
    */
   sweepAllowlist: Record<string, string>;
 }
@@ -206,48 +439,200 @@ function scriptIn(stack: string | undefined): string | undefined {
   return /https?:\/\/[^\s)]+?(?=:\d+:\d+|\s|\)|$)/.exec(stack ?? "")?.[0];
 }
 
+/** What to do about each kind, said by the sweep rather than by the page, so no cut a page's sentence takes can lose it. */
+const ADVICE = {
+  "console.error": "fix what it reports, or stop reporting it as an error",
+  pageerror: "fix what threw, or catch it where it can be handled",
+  overflow: "make what reaches past the edge fit the viewport",
+  "layout-shift": "reserve the space for whatever arrives late, or move it with a transform",
+} as const satisfies Record<Violation["kind"], string>;
+
 function describe({ kind, at, detail }: Violation): string {
-  return `${kind} at ${at} — ${detail}`;
+  return `${kind} at ${at} — ${detail}; ${ADVICE[kind]}`;
 }
 
 /**
- * Gives one page the chance to report what it has measured, and never costs the
- * assertion.
- *
- * A report crosses from the page on the frame after the check runs, so a spec
- * that ends the instant `goto` resolves would be asserted against an empty list
- * — the sweep's answer would depend on how long the spec happened to take. Two
- * frames: the first lets a pending check run, the second lets a check that
- * frame scheduled land.
- *
- * A page that navigates on a timer destroys the context this runs in, and a page
- * the spec closed has none. Both are pages with nothing left to drain, and
- * letting either throw here would replace the sweep's verdict — the list it
- * spent the whole test collecting — with a message about the flush.
+ * Every page a sweeping context watches with JavaScript on. The wrapped calls
+ * below are wrapped on Playwright's prototypes, so they run for every page in
+ * the process, and this is what they ask before touching one.
  */
-async function drain(page: Page): Promise<void> {
-  if (page.isClosed()) return;
+const WATCHED = new WeakSet<Page>();
+
+/**
+ * Runs `expression` in a watched page's current document, if it still has one,
+ * and never costs the assertion. A page that navigates, or that closes itself,
+ * while this runs has nothing left to ask, and every way that surfaces is
+ * admitted here. Letting one through would replace the sweep's verdict, the
+ * list it spent the whole test collecting, with a message about the ask.
+ */
+async function ask(page: Page, expression: string): Promise<void> {
+  if (!WATCHED.has(page) || page.isClosed()) return;
   try {
-    await page.evaluate(FLUSH);
+    await page.evaluate(expression);
   } catch (error) {
-    if (!(error instanceof Error) || !error.message.includes(DESTROYED)) throw error;
+    if (page.isClosed()) return;
+    if (!(error instanceof Error) || !GONE.some((gone) => error.message.includes(gone)))
+      throw error;
+  }
+}
+
+/** Telling a document the action numbered `id` has reached `edge`: started, or returned, which is its mark. */
+function acted(edge: "start" | "end", id: number): string {
+  return `window.${ACTOR}(${JSON.stringify(edge)}, ${id})`;
+}
+
+/** How many actions this process has marked, which is what tells two running at once apart. */
+let actions = 0;
+
+type Replacing = (typeof REPLACING)[number];
+
+type Unprompted = (typeof UNPROMPTED)[number];
+
+/** The classes whose prototypes the sweep wraps. */
+type Wrapped = Page | Locator | ElementHandle;
+
+/** Every method the sweep wraps, as Playwright types it. */
+type Called = Page[Replacing | Unprompted] | Locator[Unprompted] | ElementHandle[Unprompted];
+
+/** What a wrapped method is called with. */
+type Passed = Parameters<Called>[number];
+
+/** What a wrapped method answers. */
+type Answer = Awaited<ReturnType<Called>>;
+
+/** One wrapped method as its prototype holds it, called on `Self`. */
+type Method<Self extends Wrapped> = (this: Self, ...args: Passed[]) => Promise<Answer>;
+
+/** The methods of `Self`'s prototype the sweep wraps: the replacing calls are a page's alone. */
+type Methods<Self extends Wrapped> = Record<
+  Self extends Page ? Replacing | Unprompted : Unprompted,
+  Method<Self>
+>;
+
+/**
+ * The prototype `instance` shares with every other of its class. Playwright
+ * exports its classes as types only, so an instance is the one way to reach
+ * one.
+ */
+function prototypeOf<Self extends Wrapped>(instance: Self): Methods<Self> {
+  // oxlint-disable-next-line typescript/no-unsafe-return -- Playwright exports its classes as types only, so a prototype is reachable only through an instance, and typed only by the methods the sweep wraps
+  return Object.getPrototypeOf(instance);
+}
+
+/**
+ * `original`, reachable as `name` on an object that inherits everything else
+ * from `self`. Playwright names a call after the method its innermost frame of
+ * Playwright's own was reached through, and under its test runner a method
+ * reached through `apply` or `call` is named `apply` or `call`: a failing
+ * `page.fill` would read `page.apply`. Reached as `name`, it reads `page.fill`.
+ * Every wrapped method only reads its receiver, so an object inheriting all of
+ * `self` stands in for it.
+ */
+function callable<Self extends Wrapped, Name extends string>(
+  self: Self,
+  name: Name,
+  original: Method<Self>,
+): Record<Name, (...args: Passed[]) => Promise<Answer>> {
+  // oxlint-disable-next-line typescript/no-unsafe-return -- `Object.create` is typed to answer `any`; the object it answers holds `original` under `name` and inherits the rest from `self`
+  return Object.create(self, { [name]: { value: original } });
+}
+
+/** Wraps each named method of `prototype` in `around`, which decides when the original runs. */
+function wrap<Self extends Wrapped, Name extends string>(
+  prototype: Record<Name, Method<Self>>,
+  names: readonly Name[],
+  around: (self: Self, call: () => Promise<Answer>) => Promise<Answer>,
+): void {
+  for (const name of names) {
+    const original = prototype[name];
+    prototype[name] = async function (this: Self, ...args: Passed[]): Promise<Answer> {
+      return await around(this, async () => await callable(this, name, original)[name](...args));
+    };
+  }
+}
+
+/** Runs an `UNPROMPTED` action, and marks the user as having acted when it returns. */
+async function marked(page: Page | undefined, call: () => Promise<Answer>): Promise<Answer> {
+  if (page === undefined) return await call();
+  actions += 1;
+  const id = actions;
+  await ask(page, acted("start", id));
+  try {
+    return await call();
+  } finally {
+    await ask(page, acted("end", id));
   }
 }
 
 /**
+ * Wraps the calls the sweep needs on the prototypes they live on, once per
+ * process: on a page, the `REPLACING` calls and the `UNPROMPTED` actions, and
+ * the `UNPROMPTED` actions on a locator and an element handle. Not on a frame,
+ * though a page's and a locator's actions run through one: a wrapper there
+ * would be the innermost frame of every call and rename it `frame.fill`. The
+ * prototypes are reached through a page of the browser's own made for it,
+ * since an element handle is only had by asking a page for one.
+ */
+async function wrapOnce(browser: Browser): Promise<void> {
+  const scratch = await browser.newPage();
+  try {
+    const handle = await scratch.locator(":root").elementHandle();
+    const pages = prototypeOf(scratch);
+    wrap(pages, REPLACING, async (page, call) => {
+      await ask(page, DRAIN);
+      return await call();
+    });
+    wrap(pages, UNPROMPTED, async (page, call) => await marked(page, call));
+    wrap(
+      prototypeOf(scratch.locator(":root")),
+      UNPROMPTED,
+      async (locator, call) => await marked(locator.page(), call),
+    );
+    wrap(prototypeOf(handle), UNPROMPTED, async (element, call) => {
+      const frame = await element.ownerFrame();
+      return await marked(frame?.page(), call);
+    });
+  } finally {
+    await scratch.close();
+  }
+}
+
+/** The one `wrapOnce` this process runs, whichever test reaches it first. */
+let wrapped: Promise<void> | undefined;
+
+/**
  * Playwright's `test`, with the browser context replaced by one that watches
  * every page it opens. A repo swaps its import and every spec it already has is
- * swept:
+ * swept.
+ *
+ * Annotated rather than inferred because the declaration emitter needs a type it
+ * can name: left to infer, the `.d.ts` reaches through `@playwright/test` and
+ * names `playwright/test`, a package a consumer never declared.
  *
  * ```ts
- * import { test } from "@zerefukun/dev-config/invariant-sweep.ts";
+ * import { test } from "@zerefukun/dev-config/invariant-sweep";
  * import { expect } from "@playwright/test";
  * ```
  */
-export const test = base.extend<InvariantSweep>({
+export const test: TestType<
+  PlaywrightTestArgs & PlaywrightTestOptions & InvariantSweep,
+  PlaywrightWorkerArgs & PlaywrightWorkerOptions
+> = base.extend<InvariantSweep>({
   sweepAllowlist: [{}, { option: true }],
 
-  context: async ({ context, sweepAllowlist }, provide) => {
+  // Playwright's own option, wrapped rather than given a new default: a default
+  // is what a config's `use.video` replaces, and the switch has to win over the
+  // config. The `context` below is the one Playwright built from this value, so
+  // Playwright's own recording and saving are what run.
+  video: [
+    async ({ video }, provide) => await provide(recorded(video)),
+    { scope: "worker", box: true },
+  ],
+
+  context: async ({ browser, context, javaScriptEnabled, sweepAllowlist }, provide) => {
+    wrapped ??= wrapOnce(browser);
+    await wrapped;
+
     const allowed = Object.keys(sweepAllowlist).map((pattern) => {
       try {
         return new RegExp(pattern);
@@ -256,7 +641,7 @@ export const test = base.extend<InvariantSweep>({
         // otherwise surface as a bare SyntaxError from a fixture nobody knew
         // was compiling a pattern.
         throw new Error(
-          `sweepAllowlist key ${JSON.stringify(pattern)} is not a regular expression — the keys are patterns tested against the URL a violation came from, so a literal URL works as one and an unbalanced \`(\` does not`,
+          `sweepAllowlist key ${JSON.stringify(pattern)} is not a regular expression — the keys are patterns tested against the URL a violation came from, so a metacharacter such as \`(\`, \`?\` or \`.\` in a URL needs its backslash`,
           { cause },
         );
       }
@@ -280,47 +665,59 @@ export const test = base.extend<InvariantSweep>({
     const from = (claimed: string | undefined, page: Page): string =>
       claimed !== undefined && fetched.has(claimed) ? claimed : page.url();
 
-    const watch = (page: Page): void => {
-      page.on("response", (response) => {
-        if (ADDRESSABLE.has(response.request().resourceType())) fetched.add(response.url());
-      });
-      page.on("console", (message) => {
-        if (message.type() !== "error") return;
-        record({
-          kind: "console.error",
-          at: from(message.location().url, page),
-          detail: sanitized(message.text()),
-        });
-      });
-      page.on("pageerror", (error) => {
-        // Playwright hands a `pageerror` no frame, so where it came from is read
-        // out of the stack — and honoured on the same terms as any other claimed
-        // URL. That is what lets an embed's own thrown error be allowlisted by
-        // the embed's address rather than by the page carrying it.
-        record({
-          kind: "pageerror",
-          at: from(scriptIn(error.stack), page),
-          detail: sanitized(error.message),
-        });
-      });
+    // A page without JavaScript runs no script of the sweep's, and would
+    // never answer a drain or a mark.
+    const adopt = (page: Page): void => {
+      if (javaScriptEnabled) WATCHED.add(page);
     };
 
+    // On the context and not on each page: Playwright sends a page's events only
+    // once a listener on that page has asked for them, and a popup's first
+    // messages are sent before a listener attached on its `page` event can ask.
+    // The context's are asked for here, before any page exists. A console
+    // message with no page is a service worker's, which no page listener heard.
+    context.on("response", (response) => {
+      if (ADDRESSABLE.has(response.request().resourceType())) fetched.add(response.url());
+    });
+    context.on("console", (message) => {
+      const page = message.page();
+      if (page === null || message.type() !== "error") return;
+      record({
+        kind: "console.error",
+        at: from(message.location().url, page),
+        detail: sanitized(message.text()),
+      });
+    });
+    context.on("weberror", (thrown) => {
+      const page = thrown.page();
+      if (page === null) return;
+      // Playwright hands a thrown error no frame, so where it came from is read
+      // out of the stack — and honoured on the same terms as any other claimed
+      // URL. That is what lets an embed's own thrown error be allowlisted by the
+      // embed's address rather than by the page carrying it.
+      const error = thrown.error();
+      record({
+        kind: "pageerror",
+        at: from(scriptIn(error.stack), page),
+        detail: sanitized(error.message),
+      });
+    });
+
     // Exposed before the init script is added, because the script the next
-    // navigation runs calls it in its first frame. A *binding* rather than a
-    // plain exposed function: a binding is told which frame called it, and a
-    // page is not a trusted narrator — the frame's own URL and the fixed
-    // `overflow` kind are the harness's, and only the sentence is the page's.
-    await context.exposeBinding(REPORTER, ({ frame, page }, detail: unknown) => {
-      if (frame !== page.mainFrame()) return;
-      record({ kind: "overflow", at: frame.url(), detail: sanitized(detail) });
+    // navigation runs reads it in its first frame. A *binding* rather than a
+    // plain exposed function: a binding is told which frame called it, so the
+    // URL is the frame's own and a report from any but the top frame is dropped.
+    await context.exposeBinding(REPORTER, ({ frame, page }, kind: unknown, detail: unknown) => {
+      if (frame !== page.mainFrame() || !measured(kind)) return;
+      record({ kind, at: frame.url(), detail: sanitized(detail) });
     });
     await context.addInitScript(WATCH);
-    context.on("page", watch);
-    for (const open of context.pages()) watch(open);
+    context.on("page", adopt);
+    for (const open of context.pages()) adopt(open);
 
     await provide(context);
 
-    await Promise.all(context.pages().map(async (page) => await drain(page)));
+    await Promise.all(context.pages().map(async (page) => await ask(page, DRAIN)));
 
     expect(
       violations.map(describe),

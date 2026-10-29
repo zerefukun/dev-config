@@ -1,19 +1,29 @@
 [install]
-# Supply-chain protection: refuse any version published in the last 7 days, so a
-# compromised release that is detected and yanked within hours never reaches the
-# lockfile. Paired with `exact` for exact, auditable pins — the cooldown buys
-# nothing over a spec that floats past it on the next install.
+# Supply-chain protection: refuse any npm version published in the last 3 days,
+# so a compromised release that is detected and yanked within hours never
+# reaches the lockfile. Paired with `exact` for exact, auditable pins — the
+# cooldown buys nothing over a spec that floats past it on the next install.
 #
 # `exact`, and not `saveExact`: bun reads the first and ignores the second
 # (probed, 1.3.11 and 1.4.0 — `bun add` under `saveExact = true` writes a caret
 # range, exactly as declaring neither does).
 #
-# To bypass for one package (e.g. an urgent CVE patch):
+# The window reads npm publish times and never holds a git dependency (probed,
+# bun 1.4.0: a commit hours old installs under a ten-year window), which is how
+# every package this organisation publishes is installed. None of ours needs
+# excluding.
+#
+# To bypass for one package (e.g. an urgent CVE patch), name it exactly. Bun
+# ignores a scope pattern such as "@types/*", and an exclusion does not reach
+# the package's own dependencies (both probed, bun 1.4.0):
 #   minimumReleaseAgeExcludes = ["pkg-name"]
-minimumReleaseAge = 604800 # 7 days, in seconds
+minimumReleaseAge = 259200 # 3 days, in seconds
 exact = true
 
 [test]
+# What a run inherits from whoever started it, which under a git hook includes
+# the repository that hook is acting on: tests/git-free-environment.ts.
+preload = ["./tests/git-free-environment.ts"]
 # A floor, not a target: it catches "shipped without tests", it is not something
 # to chase. Bun exits non-zero on a breach WITHOUT printing why — a `bun test`
 # that reports every test passing and still fails is this — and it applies the
@@ -24,9 +34,9 @@ exact = true
 # docs/gates/test-suite.md.
 coverageThreshold = { lines = 0.75, functions = 0.75 }
 coverageSkipTestFiles = true
-# Three things here execute only inside a spawned process, so the runner
-# instruments them and then watches them run nowhere: the file reads as
-# unreached and drags itself under the per-file floor.
+# Four files here are graded by a suite that spawns a process rather than by the
+# runner watching them execute, so the coverage they report is not the coverage
+# they have. Each names the suite that carries its duty instead.
 #
 # `anti-slop/**` — the plugin's rules run inside a spawned oxlint.
 # `tests/anti-slop*.test.ts` is what actually grades them, by linting fixture
@@ -44,7 +54,21 @@ coverageSkipTestFiles = true
 # the runner watches this file run nowhere. `tests/dev-server.test.ts` carries
 # its duty, naming the wrong implementation each case kills.
 #
+# `property.ts` — what it does is hand fast-check a bigger number, and the only
+# thing that says whether that worked is how many times a predicate ran in a
+# process the run's environment was set for. `tests/property.test.ts` spawns a
+# `bun test` per case and reads that number back. It is here rather than left to
+# the floor because it would otherwise be *nearly* covered by accident:
+# `tests/fuzz.test.ts` calls `check` for its own properties, which walks the
+# happy path and nothing else, and a floor met that way is a floor measuring
+# somebody else's suite.
+#
 # `dev-server-derive.ts` is deliberately NOT here: everything that can be
 # answered without a machine was split into it for exactly that reason, and it is
 # graded by the floor like anything else.
-coveragePathIgnorePatterns = ["anti-slop/**", "tests/house-limiter.ts", "dev-server.ts"]
+coveragePathIgnorePatterns = [
+  "anti-slop/**",
+  "tests/house-limiter.ts",
+  "dev-server.ts",
+  "property.ts",
+]

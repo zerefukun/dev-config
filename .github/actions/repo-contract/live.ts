@@ -1,14 +1,15 @@
 /**
- * What a repo's `lifecycle` says, and everything the word "live" derives.
+ * Everything the word "live" derives. What the field itself says is
+ * `_lib/lifecycle.ts`, since a second action reads it.
  *
  * The rest of the contract grades a repo the same way whether or not anyone is
  * on the other end of it: a package manager is pinned or it is not. This half
  * grades what having users costs — a dump nobody took, a restore nobody
- * rehearsed, a crash nobody was told about, a migration nobody proved upgrades
- * — and every rule in it is reached through one field. Its own file, because
- * one word deciding whether a whole rule set applies is a different subject
- * from the facts that always apply, and the diff of a new live rule should read
- * as a rule rather than as a change to the contract.
+ * rehearsed, a crash nobody was told about, a migration nobody proved upgrades,
+ * a page nobody opened — and every rule in it is reached through one field. Its
+ * own file, because one word deciding whether a whole rule set applies is a
+ * different subject from the facts that always apply, and the diff of a new
+ * live rule should read as a rule rather than as a change to the contract.
  */
 import type { Stats } from "node:fs";
 import { readdir, readFile, stat } from "node:fs/promises";
@@ -21,58 +22,23 @@ import {
   isObject,
   type Manifest,
   type Missing,
-  oneOf,
   type Problem,
   record,
   repoFiles,
 } from "../_lib/gate.ts";
+import { type Declared, type Lifecycle, lifecycleOf } from "../_lib/lifecycle.ts";
+import { checkBrowserSuite, hasBrowserSurface } from "./browser-suite.ts";
 import { CI_WORKFLOW, type DatabaseGates } from "./ci-workflow.ts";
-
-/**
- * Whether the repo is deployed and carrying people, said by the repo about
- * itself rather than inferred from anything. Nothing derives it — a repo with a
- * hostname, a compose file and a backup script is indistinguishable from one
- * three days away from its first deploy — so it is declared, and moving it to
- * `live` is the owner's own commit. Everything below it reconfigures off that
- * one word.
- */
-const LIFECYCLES = ["dev", "live"] as const;
-
-type Lifecycle = (typeof LIFECYCLES)[number];
-
-/**
- * The field as written and as read, derived once. Two readings of one manifest
- * key are two places for it to mean different things, and the diagnostics need
- * the raw value as much as the graded one.
- */
-interface Declared {
-  /** What the manifest holds, phrased the way a diagnostic has to say it. */
-  readonly found: string;
-  /** That value as one of the two words, or nothing — its own problem, never a default. */
-  readonly is: Lifecycle | undefined;
-}
-
-/** The field as one of those, or nothing — which is its own problem and never a default. */
-function lifecycleOf(value: unknown): Lifecycle | undefined {
-  return oneOf(LIFECYCLES, value);
-}
-
-export function declaredIn(contents: ConfigObject): Declared {
-  const value = contents["lifecycle"];
-  return {
-    found: value === undefined ? "is absent" : `reads ${JSON.stringify(value)}`,
-    is: lifecycleOf(value),
-  };
-}
 
 /**
  * The field only ever moves up. `dev` is where every repo starts and says
  * nothing about anyone, so anything is reachable from it; `live` says people
  * are on the other end, and that does not stop being true because a line was
  * tidied out of a manifest. Deleting it — or writing `dev` over it — sheds
- * backups, a rehearsed restore, crash reporting and the upgrade gate in one
- * edit that reviews as a whitespace change, which is the whole reason this is
- * read from the base ref rather than trusted from the tree in front of us.
+ * backups, a rehearsed restore, crash reporting, the swept browser suite and
+ * the upgrade gate in one edit that reviews as a whitespace change, which is
+ * the whole reason this is read from the base ref rather than trusted from the
+ * tree in front of us.
  *
  * A repo really is retired sometimes, and that is a decision rather than a
  * diff: `lifecycle-retire` is where it gets written down.
@@ -170,7 +136,7 @@ export function checkLifecycle(
       : [
           {
             file: "package.json",
-            message: `lifecycle was "live" at ${base.liveAt} and now ${declared.found} — a repo does not stop carrying people because a field was tidied away, and everything "live" derives goes with it: backups, a rehearsed restore, crash reporting and the upgrade gate. Put it back, or name the lifecycle-retire exemption at the call site, which is what a deliberate retirement looks like.`,
+            message: `lifecycle was "live" at ${base.liveAt} and now ${declared.found} — a repo does not stop carrying people because a field was tidied away, and everything "live" derives goes with it: backups, a rehearsed restore, crash reporting, the swept browser suite and the upgrade gate. Put it back, or name the lifecycle-retire exemption at the call site, which is what a deliberate retirement looks like.`,
           },
         ];
   }
@@ -206,7 +172,7 @@ function notDeclared({ found, is }: Declared): Problem[] {
   return [
     {
       file: "package.json",
-      message: `lifecycle ${found} — it says "dev" or "live", and moving it to "live" is the commit that declares this repo carries real users: from then on it owes backups, a rehearsed restore, crash reporting and the upgrade gate`,
+      message: `lifecycle ${found} — it says "dev" or "live", and moving it to "live" is the commit that declares this repo carries real users: from then on it owes backups, a rehearsed restore, crash reporting, the swept browser suite and the upgrade gate`,
     },
   ];
 }
@@ -685,22 +651,31 @@ const EXECUTABLE = 0o111;
  */
 const SHIPPED_FIELDS = ["dependencies", "optionalDependencies"] as const;
 
-/** Any of Sentry's per-runtime SDKs, among what a manifest actually ships. */
-function hasSentry(contents: ConfigObject): boolean {
-  return SHIPPED_FIELDS.some((field) =>
-    Object.keys(record(contents[field])).some((name) => name.startsWith(SENTRY)),
+/** Any of Sentry's per-runtime SDKs, anywhere in the workspace, among what a manifest actually ships. */
+function hasSentry(all: readonly Manifest[]): boolean {
+  return all.some(({ value }) =>
+    SHIPPED_FIELDS.some((field) =>
+      Object.keys(record(value[field])).some((name) => name.startsWith(SENTRY)),
+    ),
   );
 }
 
 /**
- * What the caller's workflow asked check.yml for — the half of these rules that
- * is not read off the repo, and the only half that may be.
+ * What the caller's workflow holds — what its call asked check.yml for, and
+ * what its own steps run. The half of these rules that is not read off the
+ * repo, and the only half that may be.
  */
 interface Asked {
   /** Which database gates the call runs — `none` is the one value under which nothing replays the schema. */
   readonly database: DatabaseGates;
   /** The `with:` block of the job that calls check.yml, or nothing when the call is itself a problem. */
   readonly call: ConfigObject | undefined;
+  /**
+   * Every `run:` the workflow's own steps carry, in job order. Read there and
+   * handed here, so that one parse of the file answers both the questions asked
+   * of it and this module never opens it.
+   */
+  readonly steps: readonly string[];
   /**
    * Where the deployment runs this repo's backup and restore drill, when they
    * are not this repo's own scripts. The reason **is** the waiver: there is no
@@ -768,10 +743,12 @@ async function checkDataJobs(root: string, external: string): Promise<Problem[]>
  * so going live is one commit and not a checklist somebody works half of.
  *
  * Scoped to what the repo actually is. Crash reporting is owed by anything with
- * users; everything else here is about a database, and is owed exactly when the
- * repo owns one. A live marketing site has no database to dump, no lineage to
- * upgrade and no drill to rehearse — demanding them would teach people to write
- * a script that does nothing in order to get past a gate.
+ * users; the data rules are about a database and are owed exactly when the repo
+ * owns one; the swept browser suite is about pages and is owed exactly when the
+ * repo ships them. A live marketing site has no database to dump, no lineage to
+ * upgrade and no drill to rehearse, and an API has no page to open — demanding
+ * either would teach people to write something that does nothing in order to
+ * get past a gate.
  */
 export async function checkLive(
   root: string,
@@ -836,11 +813,17 @@ export async function checkLive(
     problems.push(...(await checkDataJobs(root, asked.dataJobsExternal.trim())));
   }
 
-  if (!all.some(({ value }) => hasSentry(value))) {
+  if (!hasSentry(all)) {
     problems.push({
       file: "package.json",
       message: `a live repo reports its crashes — declare the ${SENTRY} SDK for whatever it runs on, since a failure only the user sees is one nobody fixes`,
     });
+  }
+
+  // Pages are the other thing a repo can be. What testing.md asks of every one
+  // of them is the sweep, and what CI never runs is not asked of them at all.
+  if (hasBrowserSurface(all)) {
+    problems.push(...(await checkBrowserSuite(root, all, asked.steps)));
   }
 
   return problems;

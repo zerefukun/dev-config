@@ -15,6 +15,15 @@ a change to a rule usually lands here too.
 
 - `*.base.json` / `knip.base.ts` / `lighthouserc.json` — the bases repos inherit.
   Anything keyed to a repo's own paths does not belong in one.
+  `design-system.base.json` is the second oxlint base, which a Tailwind repo
+  extends beside the first: it turns on `@shadcn/lint`'s rules, named by a bare
+  specifier that resolves from the consuming repo's own install, so the plugin
+  is an optional peer here rather than a file this package ships. Its suite is
+  `tests/design-system-base.test.ts`, which links the shipped bases, the plugin
+  and `tailwindcss` into a fixture product file by file; `linted` there says why
+  not this whole checkout. This repo's own `.oxlintrc.json` extends both bases,
+  because it declares `tailwindcss` for that suite and the repo contract it runs
+  on itself holds it to the base like any other.
 - `anti-slop/` — the oxlint JS plugin `oxlint.base.json` names in `jsPlugins`,
   ported from dmmulroy/anti-slop, plus the house rules that carry a pick a file's
   position decides (README has the rule tables and the credit).
@@ -29,23 +38,67 @@ a change to a rule usually lands here too.
   has it; `checkJs` in `tsconfig.json` is what type-checks it here.
 - `default.json` — the Renovate preset, resolved by a bare `github>owner/repo`.
 - `.github/workflows/check.yml` — the gate every repo calls.
-- `.github/actions/*/` — the executable gates. Each is an `action.yml`, the gate
-  modules the suite drives, and a `*.main.ts` that GitHub runs. An action holds
+  `.github/workflows/nightly-issue.yml` beside it is what a red nightly leaves
+  behind: one issue per repo, filed while red and closed when green. It is a
+  second workflow rather than a job of check.yml's because a job inside a called
+  workflow that asks for a permission its caller has not granted invalidates the
+  whole run before anything starts, `if:` and `needs` included
+  (actions/runner#4151) — so filing lives where the caller's own job can carry
+  `issues: write`, and a repo with no nightly never names the file.
+- `.github/actions/*/` — the executable steps, which are the gates plus two.
+  Each is an `action.yml` and what it runs, which takes one of two shapes. A
+  step whose logic is TypeScript runs a `*.main.ts` over the modules the suite
+  drives. A step that is shell runs it as a body: inline in `action.yml` for
+  `secret-scan`, `install` and `test-suite`, or as a script beside it for
+  `build` (`build/build.sh`). A new shell action takes the script shape, since
+  a file is what the suite can run and the shell-scripts gate reads, where an
+  inline body is reached only by extracting it. `install` and `build` are the
+  two that grade nothing. `install` is `bun install --frozen-lockfile`, and —
+  where the caller passed a key for a private git dependency — that key,
+  written, used and removed inside the action's own shell so no lane after it
+  runs holding the path of a private key. `build` is `bun run build` with the
+  paths the caller names kept in the runner's tool cache between runs. They are
+  actions because both jobs of `check.yml` run them, and one copy serves both
+  where a copy per job rots untested (#101). An action holds
   more than one module when it holds more than one subject:
   `repo-contract/live.ts` is what the word "live" derives — everything a repo
   owes because it carries people — beside the contract every repo satisfies
-  whether or not anyone is on the other end.
-  `db-gate` holds three beside its replay: `semantic-fixtures.ts`, since what
+  whether or not anyone is on the other end; `repo-contract/browser-suite.ts` is
+  the half of that word about pages rather than about a schema, which is a
+  second subject reached through the one field; and
+  `repo-contract/package-scripts.ts` is what a workflow step ends up running
+  once the package scripts it goes through are followed, since reading a command
+  for the program it runs is a subject of its own and the rule that asks the
+  question is not about it.
+  Of what `db-gate` holds beside its replay, six need their reason stated:
+  `semantic-fixtures.ts`, since what
   the base ref's replay proves about a _schema_ and what it proves about the
   _rows_ are two subjects and the second is the only gate here that grades data;
   `base-lineage.ts`, the lineage as the base ref carried it and the rollback that
   puts a checkout back onto one, which both of those need and neither is about;
-  and `capacity.ts` for the ramp. What more than
+  `capacity.ts` for the ramp; `route-compat.ts`, the committed
+  `routes.snapshot.json` — which **every** repo running the database job owes,
+  since the file is what makes a route table readable at a ref nothing boots,
+  while the _holding_ of the base ref's routes is `live`-only — a second subject
+  over the route table `route-coverage.ts` grades, since "was this route ramped"
+  and "is this route still here" are different questions and only the second
+  reaches outside the run; `route-table.ts`, which is what those two floors
+  share and neither is about: how a route is named, and the three questions a
+  reasoned hatch over a set of routes is asked; and `fuzz.ts`, the third
+  question asked of that same table and the only one about _answers_ rather than
+  about the table — it reads the route log the coverage floor was graded on
+  rather than the app, which is what keeps its own traffic out of that floor
+  whatever order the steps are put in, and it carries a generator and a PRNG of
+  its own because an action runs from a checkout with no install. What more than
   one **action** reads lives in `_lib/`: `gate.ts` — which is where `plainly`
   sits, the environment a child whose output a gate reads is given, now that two
-  actions spawn one — and `dependency-specs.ts` —
+  actions spawn one — `dependency-specs.ts` —
   the version grammar the repo contract grades every spec by and the stack
-  denylist asks which package a spec installs. What two gates of one action
+  denylist asks which package a spec installs — and `lifecycle.ts`, the
+  `lifecycle` field itself: the repo contract derives what "live" costs a repo
+  and db-gate's compatibility floor asks the same word whether a route may be
+  dropped, and one field read twice is two answers to whether anyone is on the
+  other end. What two gates of one action
   share stays in that action's directory instead — `db-gate/database.ts`, the
   scratch database its three data gates each build for themselves and the one
   derivation of "these two dumps came out the same", and
@@ -59,7 +112,7 @@ a change to a rule usually lands here too.
   `shellcheck.sh`, each that fetch plus one pin: the three ramps in this house
   run one k6, and everything here that reads shell reads it with one shellcheck.
   Actions, rather than scripts run out of the package every repo already
-  installs: a gate in `node_modules` runs only if the repo's own workflow
+  installs: a step in `node_modules` runs only if the repo's own workflow
   remembers to run it, and it moves whenever the lockfile moves — including on
   a Renovate automerge nobody reads. It costs the release pair under
   "Releasing", and it is why gate code is not importable by the repos it
@@ -70,29 +123,60 @@ a change to a rule usually lands here too.
   plugin from the working directory, and declaring the two packages in the
   repo's manifest is what puts them under its lockfile, its exact pins and its
   release-age window.
-- The `*.ts` at the root are what a consuming repo reaches directly, as against
-  the gates, which run over it from CI. Five of them are **exports** it imports
-  and calls; the two `dev-server*` files below are a bin it runs and the module
-  that bin imports. Each is in
+- The `*.ts` at the root are what a consuming repo reaches, as against the
+  gates, which run over it from CI. Eight of them are **exports** it imports and
+  calls, and the two `dev-server*` files below are a bin it runs and the module
+  that bin imports. Two more reach it only inside those, and no specifier
+  exports either. `count-ceilings.ts` is the count budget's ceiling rule — the
+  file's shape, the seal, and the one function both the check and the write
+  command decide by — which the build bundles into `dist/count-budget.js`, a
+  module of its own so `tests/count-ceilings.test.ts` can search it with
+  properties instead of browser runs. `file-lock.ts` is which process a file
+  names, proven from `/proc`, and the one lock both `dev-server up` and the
+  count budget's write command take: the build bundles it into the count
+  budget, `files` ships its source for the bin, and `tests/file-lock.test.ts`
+  holds each waiter before every step through the `between` seam `lock` takes
+  for that suite's sake. Each export is reachable through
   `files` and `exports`, and each is here rather than in an action for the same
-  reason: what it grades is only visible from inside the repo. `route-log.ts` is
-  the protocol between an app and the route-coverage floor;
-  `invariant-sweep.ts` replaces Playwright's browser context with one that
-  watches every page it opens, popups included, and trusts a page for one
-  sanitised sentence and nothing else; `limiter-conformance.ts` is STACK's rate-limit rule as a `describe`
+  reason: it runs inside the repo's own suite or app, on what only that process
+  can reach. `route-log.ts` is the protocol between an app and the two floors
+  over its route table; `invariant-sweep.ts` replaces Playwright's browser
+  context with one that watches every page it opens, popups included, and turns
+  Playwright's own `video` on when the run sets `E2E_VIDEO=on`;
+  `count-budget.ts` is that sweep's `test` with a `budget` fixture beside it,
+  which counts a job's work per phase and holds each count exactly to a ceiling
+  committed beside the spec, which the `COUNT_BUDGET=write` run lowers and
+  never raises and a hand edit with a reason raises — deleting a test's entry
+  lets the run write it afresh, which is dev-config#146;
+  `limiter-conformance.ts` is STACK's rate-limit rule as a `describe`
   block a repo's limiter has to pass; `response-schema.ts` grades an Elysia
   app's own route table; `characterization-net.ts` is the harness under a golden
-  suite. Their pages are `docs/exports/`.
-  Two of them register tests rather than answering with problems, and the split
-  is by subject rather than by taste: a route table is a value one call can
-  grade, and a limiter is a sequence of attempts against a live Redis that only
-  a test framework can sequence.
+  suite; `property.ts` is `fc.assert` with the run's budget applied — the one
+  call every property test goes through, so a nightly can multiply how far each
+  of them searches with no test changing; `interleaving.ts` runs an Effect
+  program under a `Scheduler` whose every choice comes from fast-check data, so
+  a property generates the order overlapping fibers run in. `property.ts`,
+  `invariant-sweep.ts` and `count-budget.ts` are the three exports that read the
+  environment for a value. Their pages are `docs/exports/`.
+  `limiter-conformance.ts` registers tests where `response-schema.ts` answers
+  with problems, and the split is by subject rather than by taste: a route table
+  is a value one call can grade, and a limiter is a sequence of attempts against
+  a live Redis that only a test framework can sequence.
+  Every one is spelled **without an extension**, and what a specifier resolves
+  to is this package's business rather than a caller's: three of them are built and
+  five ship their source, and no import says which. `tsdown.config.ts` is where
+  that decision lives and why — the same fact `anti-slop/` above turns on — and
+  STACK.md's shared UI library is where a committed `dist/` is argued.
+  `bun run build` writes `dist/{route-log,invariant-sweep,count-budget}.{js,d.ts}`;
+  `tests/dist.test.ts` holds that directory equal to a fresh build, and
+  `.oxfmtrc.json`, `.oxlintrc.json` and `lefthook.yml` each say why they skip it.
 - `dev-server.ts` and `dev-server-derive.ts` — one supervised dev server per git
   worktree, on a port the worktree derives, reached as `bun run dev-server <cmd>`
   through the `bin` entry. Neither is an export: there is nothing in either for a
   repo to import, so `files` ships them, `bin` names the first, and `exports`
   names neither. The split is by what needs a machine — the bin is the detached
-  child, the claimed port, the lock and the signals; the derivation is what a
+  child, the claimed port, the lock it takes from `file-lock.ts` and the
+  signals; the derivation is what a
   worktree's server is called, which port it gets, and what its record has to be,
   and is the half a test can drive with no repository at all. That is also why
   only the bin is waived from the coverage floor in `bunfig.toml`.
@@ -105,7 +189,9 @@ a change to a rule usually lands here too.
   repo's compiler or linter, which is why `.oxlintrc.json` ignores it. A JSON
   config cannot carry the reason, so it is here.
 - `tests/` — a fixture suite per gate, driving it against a violating tree and a
-  clean one. A gate without one is a claim; `anti-slop.test.ts`,
+  clean one. A gate without one is a claim. `build-cache.test.ts` is the build
+  action's, running `build.sh` against a fixture repository whose build records
+  what the cache held when it started. `anti-slop.test.ts`,
   `anti-slop-test-smells.test.ts`, `anti-slop-env.test.ts` and
   `lint-policy.test.ts` hold every lint rule in `anti-slop/` to the same bar — a
   block of cases per rule, split where the base splits, since the rules scoped to
@@ -135,11 +221,14 @@ a change to a rule usually lands here too.
   not the compiler's, and three comparisons holding that table, the base and the
   README's own table to one set. And `action-evidence.test.ts` holds every action
   publishing an artifact to keeping the runner-temp paths its own YAML names.
-  `repo-contract-fixture.ts` is the clean tree the repo contract's three suites
+  `repo-contract-fixture.ts` is the clean tree the repo contract's four suites
   share — split the way the gate is: the facts every repo satisfies, the
   `lifecycle` half in `repo-contract-live.test.ts` (mirroring `live.ts`, since
-  one word deciding whether a whole rule set applies is its own subject), and
-  how a dependency spec is read; `journalled-migrator.ts`, `replaying-migrator.ts` and
+  one word deciding whether a whole rule set applies is its own subject), what
+  pages cost a live repo in `repo-contract-browser.test.ts` (a second subject
+  under that same word, and the reason the live static site is in the fixture
+  rather than in either), and how a dependency spec is read;
+  `journalled-migrator.ts`, `replaying-migrator.ts` and
   `schema-migrator.ts` are the three `db:migrate` shapes the database gates are
   written for — a journalled one, a hand-rolled runner with no journal, and the
   per-lineage journals a repo with more than one lineage has to have; and `mutation-lane.test.ts` links this repo's own `node_modules` into
@@ -148,7 +237,14 @@ a change to a rule usually lands here too.
   same argument one level down: that gate is a shell script rather than a
   module, so the suite extracts the step out of the shipped `action.yml` and
   runs it over fixture suites of its own. It needs passwordless sudo, because
-  what it is grading is a network namespace.
+  what it is grading is a network namespace. `nightly-issue.test.ts` is that
+  argument once more, over the one step in this repo whose subject is an effect
+  that leaves the system: it extracts the filing step out of its workflow and
+  runs it with a `gh` of the suite's own on the path — one that logs every call
+  and then runs the step's own `--jq` program over canned API JSON with the real
+  `jq`, so a filter selecting the wrong issues fails here rather than on
+  GitHub. What it grades is which calls the step made, because for that step the
+  calls are the contract.
   The exports' suites are the same shape once more. `house-limiter.ts` is
   STACK's limiter plus every named way of building a wrong one — a bucket in the
   process, a key that includes the path, a chain read in the wrong order — and
@@ -158,9 +254,47 @@ a change to a rule usually lands here too.
   wrote a case for does not exist. `sweep-fixture.ts` serves the pages the
   invariant sweep is driven over and runs one Playwright process across every
   spec: a browser and a server, because every fact that fixture claims is a
-  browser fact. `@sinclair/typebox` is a devDependency nothing here imports:
+  browser fact. `count-budget-fixture.ts` is the same for the count budget's
+  browser facts — the ceiling rule is not one, and is searched without a browser
+  in `count-ceilings.test.ts` — with
+  a React app among its pages that it builds in memory once per suite, for
+  production — `react` and `react-dom` are devDependencies nothing imports for
+  that reason — and its suite runs Playwright several times over one tree,
+  because what one run writes into a ceilings file is what the next is checked
+  against. That suite also spins a process on every core for the length of 20
+  runs of one page, since a count read under load is half of what it grades, and
+  it is the longest browser suite here, at about three and a half minutes.
+  `property.test.ts` is the limiter's argument once more — a
+  `bun test` spawned per case, because what `check` does is hand fast-check a
+  bigger number and the only thing that says whether it worked is how many times
+  the predicate ran; the default it multiplies is graded as a difference against
+  `fc.assert` rather than against the literal 100, which is fast-check's to
+  change. `interleaving.test.ts` searches the racy fixtures in
+  `interleaving-fixtures.ts` on fresh seeds, sized and counted by the rules on
+  the export's page, and holds the page's regression probe on the torn read;
+  the fixtures are a module of their own because
+  `interleaving-measure.ts`, which re-takes the page's measurement table, runs
+  them too. `fuzz.test.ts` drives the fuzzer against a real server on a real
+  port, since each of its four invariants is a statement about a response — and the
+  route that never answers is why that fixture disposes without awaiting
+  `stop()`. `@sinclair/typebox` is a devDependency nothing here imports:
   it is elysia's peer, and `t` — which `response-schema.test.ts` builds its
   fixture app's schemas with — is typebox under elysia's re-export.
+  `git-free-environment.ts` is the one file here that is not a suite and not a
+  fixture: `bunfig.toml` preloads it, so it runs before the first test file of
+  every `bun test`. It takes the whole `GIT_` prefix out of the environment,
+  because git hands a hook the location of the repository it is acting on. No
+  hook of this repo runs the suite, but a developer's own hook or gitignored
+  `lefthook-local.yml` that runs `bun test` would otherwise build its fixtures
+  inside that repository, which once rewrote a branch. Doing that to
+  `process.env` reaches only the spawn sites that pass one, since bun's `env`
+  default is the block the process launched with — so it also replaces
+  `Bun.spawn` and `Bun.spawnSync` for the whole test process. **That is the repo-wide gotcha**: a `Bun.spawn(cmd,
+{ cwd })` written in any suite here is given the environment as it stands, not
+  bun's default, and one variable rides along that bun would have left out —
+  `NODE_ENV`, which `bun test` sets after launch.
+  `git-free-environment.test.ts` holds all of it from outside, against a
+  sacrificial repository it builds.
 - `docs/gates/*.md` — a reference page per gate; `docs/exports/*.md` — one per
   package export. README holds both maps.
 
@@ -169,6 +303,7 @@ a change to a rule usually lands here too.
 ```sh
 bun run check   # format:check + lint + typecheck + knip
 bun test        # the gate suites
+bun run build   # rewrites the committed dist/ from the three built exports
 ```
 
 Neither is coverage-floored: `bunfig.toml` declares the threshold and CI's
@@ -182,10 +317,10 @@ them and then watches them run nowhere. What carries their duty instead is
 trees with the shipped binary — a block of cases per rule, and a check that the
 base enables exactly the rules the plugin defines.
 
-`tests/house-limiter.ts` and `dev-server.ts` are out for the same reason and
-carry their duty the same way — a suite that spawns the real thing. `bunfig.toml`
-names which suite, per file, and says why `dev-server-derive.ts` is not with
-them.
+`tests/house-limiter.ts`, `dev-server.ts` and `property.ts` are out for the same
+reason and carry their duty the same way — a suite that spawns the real thing.
+`bunfig.toml` names which suite, per file, and says why `dev-server-derive.ts`
+is not with them.
 
 `bun test` needs a Postgres, a Redis, a chromium and passwordless sudo. The
 first because the replay gate's property is what two databases end up holding
@@ -220,7 +355,8 @@ commit cannot reference its own SHA:
 2. the commit that repoints `check.yml` at (1) — bump `version` again, tag
    that.
 
-Consumers pin the actions at (1) and the workflow call at (2). A tag must sit on
+Consumers pin the actions at (1) and either workflow call — `check.yml`,
+`nightly-issue.yml` — at (2). A tag must sit on
 exactly the commit its pins name. A change here reaches a repo when its pin
 moves and not before, which is the point: a new gate cannot turn the fleet red
 overnight, and the diff that adopts it is one line someone reviewed.

@@ -5,9 +5,13 @@ in `README.md`, and why a choice was made lives at the choke point that made it:
 a comment where the code decides, or a line in `CLAUDE.md`.
 
 **Base** — a configuration file here that a consuming repo inherits rather than
-copies: `tsconfig.base.json`, `oxlint.base.json`, `knip.base.ts`,
-`lighthouserc.json`. A base holds what is true of every repo; anything keyed to
-a repo's own paths is not a base's business.
+copies: `tsconfig.base.json`, `oxlint.base.json`, `design-system.base.json`,
+`knip.base.ts`, `lighthouserc.json`. A base holds what is true of every repo it
+applies to; anything keyed to a repo's own paths is not a base's business.
+
+**Design system** — a product's stylesheet theme plus its shared components
+directory. A page that uses a colour, a value or a component style from outside
+them has drifted from it.
 
 **Gate** — a check that can fail a build. A gate has a name, a diagnostic that
 says what to do about it, and a fixture suite proving it refuses a violating
@@ -42,14 +46,15 @@ property of what the repo _is_, and it is visible in the caller's diff.
 **Lifecycle** — whether a repo is carrying real people, declared by the repo in
 one field and inferred by nothing: `dev` or `live`. Distinct from a deployment,
 which is a thing that has happened, and from an exemption, which is about what a
-repo _is_ — this is about who it owes. `live` is what the crash
-reporting is derived from, and — for a repo that owns migrations — the backups,
-the rehearsed restore and the upgrade gate as well. All of it read from the repo
-rather than from a workflow input, so that going live is one word rather than a
-checklist somebody does half of, and cannot be undone by editing the workflow
-those rules govern. It only moves up: `dev` says nothing about anyone, `live`
-says people are on the other end, and a repo that is genuinely being wound down
-says so with an exemption rather than with a deleted line.
+repo _is_ — this is about who it owes. `live` is what the crash reporting is
+derived from; the swept browser suite for a repo that ships pages; and — for a
+repo that owns migrations — the backups, the rehearsed restore and the upgrade
+gate as well. All of it read from the repo rather than from a workflow input, so
+that going live is one word rather than a checklist somebody does half of, and
+cannot be undone by editing the workflow those rules govern. It only moves up:
+`dev` says nothing about anyone, `live` says people are on the other end, and a
+repo that is genuinely being wound down says so with an exemption rather than
+with a deleted line.
 
 **Base ref** — the commit a tree is compared against: the merge base with the
 branch a pull request targets, or the tip a push had before it. One derivation,
@@ -91,9 +96,24 @@ from an exemption, which is about what a repo is, and from a downgrade to `warn`
 which stops the rule blocking anything at all.
 
 **Floor** — a bound set below what honest work already produces, there to catch
-the absence of the work rather than to be aimed at: the coverage threshold, and
-the capacity ramp's route coverage. A floor says a route has been under load
-once; it says nothing about whether that load resembled production.
+the absence of the work rather than to be aimed at: the coverage threshold, the
+capacity ramp's route coverage, and the route compatibility floor. A floor says
+a route has been under load once, or that it is still there at all; it says
+nothing about whether that load resembled production, or whether the route still
+answers what it used to.
+
+**Nightly** — a run of the shared check that nobody is waiting on: the same
+gates over the same tree, with the searches that scale given room to run, and
+one issue per repo for as long as it stays red. Distinct from the schedule that
+starts it, which is the caller's own trigger, and from a gate: nothing new is
+asserted, the same assertions are made harder to satisfy.
+
+**Budget** — what a search is allowed to spend, decided by the run rather than
+written into the code being searched: a wall clock for the fuzzer, a multiplier
+and a time limit for a property. Distinct from a timeout, which bounds something
+that has gone wrong; a budget bounds something that could go on forever and is
+worth more the longer it does. A budget is never a bar to clear — what it stops
+is a pass.
 
 **Trend line and claim** — the two things a capacity ramp can produce, from one
 script and one reader. On a CI runner the app shares a machine with a Postgres,
@@ -103,8 +123,14 @@ asks for. `ran-on` names which happened, because nothing downstream can tell.
 
 **Route table** — the routes an app serves, named by the app itself as its
 router registered them (`/presets/:id`, not `/presets/42`). Only the router
-knows which route answered a URL, so it is the only honest source, and the
-capacity ramp's floor is measured against it.
+knows which route answered a URL, so it is the only honest source, and both
+floors over it are measured against it.
+
+**Route snapshot** — a repo's committed `routes.snapshot.json`: its route table
+as of a commit, which is what makes the table readable at a ref nothing boots.
+The gate that reads it also generates it and refuses any difference from the
+booted app, so it is a golden the app itself keeps honest rather than a file
+somebody maintains.
 
 **Pin** — a reference by content rather than by name: a commit SHA for an
 action or a workflow, a SHA-256 for a released binary, a digest for an image,
@@ -115,9 +141,11 @@ the contract.
 commit that ships the composite actions, one on the commit whose workflows pin
 them. A consumer pins the second.
 
-**Queue vocabulary** — the two labels an issue may carry. An open issue with no
-label is a proposal, and GitHub's close reasons say whether a closed one was
-completed or declined; `roadmap` marks an agreed direction with no date, and
-`commitment` means the body names the event that makes the issue due. Nothing
-in CI reads any of it — it is a convention, kept because agents rather than
-people are the ones re-reading the queue.
+**Queue vocabulary** — the three labels an issue may carry, each set only on the
+owner's word. An open issue with no label is new: nobody has ruled on it.
+`parked` means the owner has seen it, has not decided, and does not want it
+raised again; `roadmap` marks an agreed direction with no date; `commitment` is
+agreed work whose **Trigger:** line says when to check it. GitHub's close
+reasons say whether a closed one was completed or declined. Nothing in CI reads
+any of it — it is a convention, kept because agents rather than people are the
+ones re-reading the queue.

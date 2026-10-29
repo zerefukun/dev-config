@@ -15,7 +15,14 @@ const config: KnipConfig = {
   // The mutation lane's own two packages, which its suite drives against this
   // repo's install. The names come from the base rather than from here;
   // knip.base.ts says why the spread is the repo's.
-  ignoreDependencies: [...mutationLaneDependencies],
+  // tailwindcss beside them, which nothing here imports: the design-system
+  // suite links it into its fixture, because no-unknown-classes asks the
+  // project's own Tailwind which classes exist. The package also switches on
+  // knip's Tailwind plugin, which compiles stylesheets this repo does not have.
+  // react and react-dom are the count budget's fixture app, which the suite
+  // builds from source held in a string, so no file here imports either.
+  ignoreDependencies: [...mutationLaneDependencies, "tailwindcss", "react", "react-dom"],
+  tailwind: false,
   // capacity.js is not this repo's program: it runs inside k6, against modules
   // built into that runtime and resolvable from no package.json anywhere. The
   // linter skips it for the same reason, and tests/capacity-script.ts executes

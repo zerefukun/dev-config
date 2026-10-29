@@ -27,6 +27,15 @@ const MEMOISATION =
 const CASE_SETUP =
   "Set a case up with a call it makes itself, and tear it down with `await using` — " +
   "beforeAll/afterAll stay for shared immutable resources.";
+const SWEEP =
+  "Import `test` from @gokayo43/dev-config/invariant-sweep — the sweep's fixture checks " +
+  "every page a spec opens for console errors, uncaught errors and overflow. `expect` and the " +
+  "rest of the module are unchanged.";
+const BUDGET =
+  "Import `check` from @gokayo43/dev-config/property — it multiplies every property's run " +
+  "count by PROPERTY_RUNS_FACTOR, which is what lets one run search a hundred times as far as " +
+  "another. The default export is refused with it because `fc.assert` reaches the same call: " +
+  "import the generators by name.";
 
 /** And what each plugin rule says, which is the rule's own. */
 const NAMED_HOOK = "Move this effect into a named hook under `hooks/`";
@@ -224,8 +233,43 @@ export const used = query.useQuery;
   "case.test.ts": `import { afterAll, afterEach, beforeAll, beforeEach, test } from "bun:test";
 export const used = [afterAll, afterEach, beforeAll, beforeEach, test];
 ${ASSERTIONS}`,
+
+  "e2e/home.spec.ts": `import { test } from "@playwright/test";
+export const used = test;
+`,
+  "e2e/renamed.spec.ts": `import { test as base } from "@playwright/test";
+export const used = base;
+`,
+  "e2e/namespaced.spec.ts": `import * as playwright from "@playwright/test";
+export const used = playwright.test;
+`,
+  "e2e/fixtures.ts": `import { test } from "@playwright/test";
+export const used = test;
+`,
+  "e2e/asserting.spec.ts": `import { expect } from "@playwright/test";
+export const used = expect;
+`,
+  "playwright.config.ts": `import { defineConfig, devices } from "@playwright/test";
+export default defineConfig({ projects: [{ name: "desktop", use: devices["Desktop Chrome"] }] });
+`,
   "tests/harness.ts": ASSERTIONS,
   "src/asserting.ts": ASSERTIONS,
+
+  "src/domain/total.property.test.ts": `import { assert, integer, property } from "fast-check";
+export const used = [assert, property, integer];
+`,
+  "src/domain/rounding.property.test.ts": `import fc from "fast-check";
+export const used = fc.assert;
+`,
+  "src/domain/money.property.test.ts": `import * as fc from "fast-check";
+export const used = fc.assert;
+`,
+  "src/domain/generators.ts": `import { integer, property } from "fast-check";
+export const used = [integer, property];
+`,
+  "src/domain/legacy-runner.ts": `import { assert } from "fast-check";
+export const used = assert;
+`,
 };
 
 const REPORTED = await gradedByBase(TREE);
@@ -424,6 +468,78 @@ describe("a case's setup", () => {
   test("while the once-per-file pair stays legal, which is what a shared resource has", () => {
     expect(refusedIn("case.test.ts")).not.toContain("beforeAll");
     expect(refusedIn("case.test.ts")).not.toContain("afterAll");
+  });
+});
+
+describe("a page a spec opens", () => {
+  // The one name of that module the sweep replaces. What the ban buys is that
+  // the three invariants are a property of visiting a page at all, rather than
+  // assertions every spec has to remember — so the spec that forgot the import
+  // is exactly the spec they would be missing from.
+  test("is swept, so Playwright's own `test` is refused in a spec", () => {
+    expect(refusedIn("e2e/home.spec.ts")).toEqual(["test"]);
+    expect(adviceIn("e2e/home.spec.ts")).toContain(SWEEP);
+  });
+
+  // Renamed is the spelling the fixture module itself uses, and a namespace
+  // import names no specifier at all — one edit away from a rule that reads
+  // only the import statement.
+  test.each(["e2e/renamed.spec.ts", "e2e/namespaced.spec.ts"])(
+    "including in %s, which reaches the name without importing it plainly",
+    (path) => {
+      expect(saidIn(path, SWEEP)).toBe(true);
+    },
+  );
+
+  // The ban holds in every file, which is why it is carried as a list entry: a
+  // fixture module beside the specs is where an unswept `test` would be wrapped
+  // once and inherited by every spec that imports it.
+  test("and in a helper beside the specs, which is not a spec file at all", () => {
+    expect(refusedIn("e2e/fixtures.ts")).toEqual(["test"]);
+  });
+
+  // What is banned is the name, not the module: the assertion library is
+  // Playwright's and so is the config's own builder.
+  test.each(["e2e/asserting.spec.ts", "playwright.config.ts"])(
+    "while %s keeps the rest of the module",
+    (path) => {
+      expect(drawnIn(path)).toEqual([]);
+    },
+  );
+});
+
+describe("how far a property searches", () => {
+  // The dial is the house budget's, so the call every property goes through has
+  // to be the one that reads it. A test calling `fc.assert` runs the number its
+  // author typed, whatever the run asked for — which is the state the fleet was
+  // in when this entry was written.
+  test("is the run's to decide, so fast-check's own `assert` is refused", () => {
+    expect(refusedIn("src/domain/total.property.test.ts")).toEqual(["assert"]);
+    expect(adviceIn("src/domain/total.property.test.ts")).toContain(BUDGET);
+  });
+
+  // The spelling the fleet actually writes, and the reason the entry names the
+  // default export as well: `fc.assert` off a default import reaches the same
+  // call without ever naming it, and an entry listing only `assert` would have
+  // been a ban on one file in thirteen.
+  test.each(["src/domain/rounding.property.test.ts", "src/domain/money.property.test.ts"])(
+    "including %s, which reaches the call without importing its name",
+    (path) => {
+      expect(saidIn(path, BUDGET)).toBe(true);
+    },
+  );
+
+  // What is banned is the call, not the library: the generators are the whole
+  // point of the dependency and come in by name.
+  test("while the generators are untouched, which is what the module is for", () => {
+    expect(drawnIn("src/domain/generators.ts")).toEqual([]);
+  });
+
+  // The ban holds in every file, which is why it is carried as a list entry: a
+  // helper beside the suite is where an unbudgeted `assert` would be wrapped
+  // once and called by every property in the repo.
+  test("and it holds outside a test file, where a wrapper would otherwise sit", () => {
+    expect(refusedIn("src/domain/legacy-runner.ts")).toEqual(["assert"]);
   });
 });
 
