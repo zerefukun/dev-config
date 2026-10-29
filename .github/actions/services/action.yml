@@ -1,0 +1,35 @@
+name: Services
+description: >-
+  A throwaway PostgreSQL 16 and Redis 7 for one job, run from the runner's own
+  binaries under RUNNER_TEMP and listening on 127.0.0.1 alone, each on a port
+  the kernel picked. `start` hands back their URLs as outputs; `stop`, in a step
+  under `always()`, takes both down and deletes their data. The runner provides
+  PostgreSQL 16's initdb, pg_ctl and postgres on PATH or in $PG_BIN, and
+  redis-server 7 on PATH. README's "Where it runs" has why it is this shape.
+
+inputs:
+  command:
+    description: >-
+      `start`, before the first step that needs either server, or `stop`, as the
+      job's last step under `if: always()`.
+    required: true
+
+outputs:
+  database-url:
+    description: postgres://postgres:postgres@127.0.0.1:<port>/postgres, after `start`.
+    value: ${{ steps.services.outputs.database-url }}
+  redis-url:
+    description: redis://127.0.0.1:<port>, after `start`.
+    value: ${{ steps.services.outputs.redis-url }}
+
+runs:
+  using: composite
+  steps:
+    - id: services
+      shell: bash
+      env:
+        INPUT_COMMAND: ${{ inputs.command }}
+      run: |
+        set -euo pipefail
+        PATH="${PG_BIN:+$PG_BIN:}$PATH" \
+          bun "$GITHUB_ACTION_PATH/services.main.ts" "$INPUT_COMMAND" "$RUNNER_TEMP/services" "$GITHUB_OUTPUT"

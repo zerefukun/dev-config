@@ -1196,12 +1196,7 @@ pointed at, so `TEST_DATABASE_URL` is required and the suite refuses to guess �
 `tests/postgres.ts` is its one reader. There used to be a `localhost:5432`
 default, on the argument that a suite naming its own databases costs a stranger
 nothing; that stopped being true when `localhost` became a box running the
-fleet's stacks and its CI runners. Locally:
-
-```sh
-docker run --rm -d -p 127.0.0.1:5497:5432 -e POSTGRES_PASSWORD=postgres postgres:16-alpine
-export TEST_DATABASE_URL=postgres://postgres:postgres@127.0.0.1:5497/postgres
-```
+fleet's stacks and its CI runners.
 
 Two runs may share one server: every name either the suite or a gate puts on it
 carries what tells the runs apart — the process for the suite's own databases,
@@ -1214,14 +1209,23 @@ is given, and is required for the same reason and refuses to guess for the same
 reason. A default address is how a suite wipes the Redis four stacks on one box
 were sharing.
 
+Both come from the `services` action, which CI runs and a machine runs by hand.
+It needs PostgreSQL 16's server binaries (`initdb`, `pg_ctl`, `postgres`) and
+`redis-server` 7 on `PATH`, and an account that is not root; the replay and
+backfill gates also need PostgreSQL 16's `pg_dump` there. Debian's packages put
+the Postgres binaries in `/usr/lib/postgresql/16/bin`, off `PATH`:
+
 ```sh
-docker run --rm -d -p 127.0.0.1:6390:6379 redis:7-alpine
-export TEST_REDIS_URL=redis://127.0.0.1:6390
+PATH=/usr/lib/postgresql/16/bin:$PATH \
+  bun .github/actions/services/services.main.ts start /tmp/dev-config-services /dev/stdout
+export TEST_DATABASE_URL=… TEST_REDIS_URL=…   # the two URLs it printed
+# and when done
+bun .github/actions/services/services.main.ts stop /tmp/dev-config-services /dev/null
 ```
 
-Both publish on `127.0.0.1` explicitly: a bare `-p 5432:5432` binds `0.0.0.0`,
-and Docker's forwarding rule answers it on the box's public address whatever
-`ufw` is set to.
+Both listen on `127.0.0.1` alone, each on a port the kernel picked, so nothing
+off the box reaches them and a second checkout's pair never collides with the
+first.
 
 The invariant sweep's suite and the count budget's browser suite drive a real
 browser against a real server, because what those fixtures claim is a browser

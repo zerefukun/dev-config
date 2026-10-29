@@ -1,5 +1,7 @@
 import { describe, expect, test } from "bun:test";
+import { join } from "node:path";
 
+import { type ConfigObject, isList, record } from "../.github/actions/_lib/gate.ts";
 import { workflowGate } from "../.github/actions/lint-workflows/pins.ts";
 import {
   servicesIn,
@@ -154,11 +156,77 @@ describe("a service the gate cannot read", () => {
   });
 });
 
+const ROOT = new URL("..", import.meta.url).pathname;
+
+/** Every job in this repo's own workflows, as `<file>: <job>` and its body. */
+async function ownJobs(): Promise<[string, ConfigObject][]> {
+  const files = await Array.fromAsync(new Bun.Glob(".github/workflows/*.yml").scan(ROOT));
+  const documents = await Promise.all(
+    files.toSorted().map(async (file) => {
+      const document = record(Bun.YAML.parse(await Bun.file(join(ROOT, file)).text()));
+      return Object.entries(record(document["jobs"])).map(([job, body]): [string, ConfigObject] => [
+        `${file}: ${job}`,
+        record(body),
+      ]);
+    }),
+  );
+  return documents.flat();
+}
+
+/** Where a job starts and stops its servers, and the last step that reads their URLs. */
+function servicesWiring(job: ConfigObject): string {
+  const steps = (isList(job["steps"]) ? job["steps"] : []).map((step) => record(step));
+  const at = (command: string): number[] =>
+    steps.flatMap((step, index) =>
+      /\/\.github\/actions\/services(@|$)/.test(String(step["uses"])) &&
+      record(step["with"])["command"] === command
+        ? [index]
+        : [],
+    );
+  const [start, ...moreStarts] = at("start");
+  const [stop, ...moreStops] = at("stop");
+  const lastRead = Math.max(
+    -1,
+    ...steps.flatMap((step, index) =>
+      JSON.stringify(step).includes("steps.services.outputs") ? [index] : [],
+    ),
+  );
+  if (start === undefined && stop === undefined) return "none";
+  return [
+    moreStarts.length === 0 && moreStops.length === 0 ? "one each" : "more than one",
+    start !== undefined && steps[start]?.["id"] === "services"
+      ? "start is `services`"
+      : "start unnamed",
+    stop !== undefined && steps[stop]?.["if"] === "always()" ? "stop always" : "stop conditional",
+    stop !== undefined && stop > lastRead && (start ?? Infinity) < stop
+      ? "stop last"
+      : "stop early",
+  ].join(", ");
+}
+
 // This repo's own workflows are the first callers of every service rule above,
-// and the adapter refuses an image it holds no capture for, so a service added
-// here without one fails rather than passing unexamined.
-test("this repo's workflows leave no volume behind", async () => {
-  const root = new URL("..", import.meta.url).pathname;
-  const problems = await workflowGate(root, [], volumesOf);
+// and the adapter refuses an image it holds no capture for.
+test("this repo's workflows pass the workflow gate", async () => {
+  const problems = await workflowGate(ROOT, [], volumesOf);
   expect(problems.map(({ file, message }) => `${file ?? ""}: ${message}`)).toEqual([]);
+});
+
+// The runner these workflows are written for has no container runtime: their
+// servers come from the services action. The wrong implementations are a
+// `services:` or `container:` block coming back, which waits on a runtime the
+// runner does not have; a stop that runs only when the job passed, which
+// leaves a failed job's servers on the box; and a stop placed before a step
+// that still reads the servers' URLs.
+describe("this repo's own workflows", () => {
+  test("stop the servers they start under always(), after every step that reads them", async () => {
+    const wired = (await ownJobs())
+      .map(([job, body]): [string, string] => [job, servicesWiring(body)])
+      .filter(([, wiring]) => wiring !== "none");
+    expect(wired.map(([job]) => job)).toContain(".github/workflows/ci.yml: check");
+    for (const [job, wiring] of wired) {
+      expect(`${job}: ${wiring}`).toBe(
+        `${job}: one each, start is \`services\`, stop always, stop last`,
+      );
+    }
+  });
 });

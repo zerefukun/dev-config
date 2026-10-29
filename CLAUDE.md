@@ -332,7 +332,7 @@ namespace and nothing short of taking one says whether it holds. Neither
 `TEST_DATABASE_URL` nor `TEST_REDIS_URL` has a default, and each is refused when
 unset: the database suites create and **drop** databases on the server they are
 given and the conformance suite **flushes** its Redis, and `localhost` on this
-box is a host address one of the stacks or a runner's service container may be
+box is a host address one of the stacks or another job's throwaway server may be
 publishing. `tests/postgres.ts` is the one reader of the first.
 README's "Gating this repo" has the one-liners, including the browser install.
 

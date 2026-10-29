@@ -26,47 +26,6 @@ jobs:
     runs-on: [self-hosted, linux]
     timeout-minutes: 15
 
-    # The replay gate's fixtures are two databases and what each ends up
-    # holding, so the suite drives a real Postgres — see tests/replay.test.ts
-    # for why nothing in-process can stand in. Pinned by digest for the same
-    # reason the actions are.
-    #
-    # `127.0.0.1::` is the `ip::containerPort` form — loopback, and a host port
-    # the daemon picks. See check.yml's database job for why both halves matter
-    # on a self-hosted runner; the short of it is that a bare `5432:5432` is
-    # reachable from off the box, and that two of these jobs cannot both have
-    # it. Every URL below is built from the assignment rather than from a
-    # number, which is also what makes TEST_DATABASE_URL explicit here.
-    services:
-      postgres:
-        image: postgres:16-alpine@sha256:20edbde7749f822887a1a022ad526fde0a47d6b2be9a8364433605cf65099416
-        env:
-          POSTGRES_PASSWORD: postgres
-        ports:
-          - 127.0.0.1::5432
-        options: >-
-          --health-cmd pg_isready
-          --health-interval 5s
-          --health-timeout 5s
-          --health-retries 30
-          --tmpfs /var/lib/postgresql/data:size=1g
-
-      # The limiter conformance suite grades a bucket two processes share and a
-      # limiter whose Redis is gone, neither of which anything in-process can
-      # stand in for. It is flushed between cases and refuses to guess at an
-      # address, so this instance exists for that suite and nothing else and the
-      # step below names it.
-      redis:
-        image: redis:7-alpine@sha256:ff02b58f971e7d7d156a1267e283fcbbeee91773b6aa36c49dac28ecfe28eadf
-        ports:
-          - 127.0.0.1::6379
-        options: >-
-          --health-cmd "redis-cli ping"
-          --health-interval 5s
-          --health-timeout 5s
-          --health-retries 30
-          --tmpfs /data:size=64m
-
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -95,8 +54,8 @@ jobs:
       #
       # The fifth is the test-suite action, which the step below substitutes for
       # rather than uses. Its seal puts the run in a network namespace, and the
-      # Postgres and Redis this suite needs are service containers on the host's
-      # loopback, which that namespace does not reach. Substituting drops three
+      # Postgres and Redis this suite needs listen on the host's loopback, which
+      # that namespace does not reach. Substituting drops three
       # guarantees every other repo gets — the seal itself, the junit report,
       # and the two greps over it that refuse a skipped test and an
       # assertion-free one — so this repo is the one repo not held to them.
@@ -134,6 +93,16 @@ jobs:
       # each one refuses a violating tree and passes a clean one. Every other
       # repo's gate is only as honest as these two lanes.
       - run: bun run check
+
+      # The replay gate's fixtures are two databases and what each ends up
+      # holding, and the limiter conformance suite grades a bucket two
+      # processes share and a limiter whose Redis is gone; nothing in-process
+      # stands in for either.
+      - id: services
+        uses: ./.github/actions/services
+        with:
+          command: start
+
       # `--coverage` by hand: it is the one guarantee of the substituted action
       # this step does keep, and without it the floor above it declares is
       # applied to nothing. docs/gates/test-suite.md.
@@ -141,10 +110,17 @@ jobs:
         env:
           # Neither has a default, deliberately: the conformance suite flushes
           # its Redis and the database suites drop databases on their server,
-          # and `localhost` on a box that runs the fleet's stacks is not a safe
-          # thing for either to assume. Both are the port the daemon assigned.
-          TEST_DATABASE_URL: postgres://postgres:postgres@127.0.0.1:${{ job.services.postgres.ports['5432'] }}/postgres
-          TEST_REDIS_URL: redis://127.0.0.1:${{ job.services.redis.ports['6379'] }}
+          # and `localhost` on a box that runs other things is not a safe thing
+          # for either to assume. Both are the instances the step above started.
+          TEST_DATABASE_URL: ${{ steps.services.outputs.database-url }}
+          TEST_REDIS_URL: ${{ steps.services.outputs.redis-url }}
+
+      # Under always(), so a start or a suite that failed still leaves nothing
+      # running and nothing on the runner's disk.
+      - if: always()
+        uses: ./.github/actions/services
+        with:
+          command: stop
 
       # The k6 ramp this repo ships is the one file its own linter cannot read,
       # so it gets executed instead: both branches, against a stub server.
