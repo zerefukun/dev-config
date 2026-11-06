@@ -72,7 +72,7 @@ export function workflow(jobs: string): string {
 export function checkJob(...inputs: string[]): string {
   const asked =
     inputs.length === 0 ? "" : `    with:\n${inputs.map((input) => `      ${input}\n`).join("")}`;
-  return `  check:\n    uses: gokayo43/dev-config/.github/workflows/check.yml@${PIN} # v0.6.0\n${asked}`;
+  return `  check:\n    uses: zerefukun/dev-config/.github/workflows/check.yml@${PIN} # v0.6.0\n${asked}`;
 }
 
 export const CLEAN: Tree = {

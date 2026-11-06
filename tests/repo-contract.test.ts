@@ -447,7 +447,7 @@ describe("contract exemptions", () => {
     ).toEqual([]);
     expect((await repoContract(root, DEFAULTS)).map(({ message }) => message)).toEqual([
       containing(".env.example must be tracked"),
-      containing("no job calls gokayo43/dev-config/.github/workflows/check.yml"),
+      containing("no job calls zerefukun/dev-config/.github/workflows/check.yml"),
     ]);
   });
 

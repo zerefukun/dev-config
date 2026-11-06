@@ -46,7 +46,7 @@ export function notDatabaseGates(value: string): string {
   )}: postgres runs check.yml's own database job, external says a wrapper workflow runs the database gates instead of it, and none is a repo with no schema`;
 }
 
-const CHECK_CALL = /^gokayo43\/dev-config\/\.github\/workflows\/check\.yml@[0-9a-f]{40}$/;
+const CHECK_CALL = /^zerefukun\/dev-config\/\.github\/workflows\/check\.yml@[0-9a-f]{40}$/;
 
 /** The repo's call into the shared gate, and what is wrong with it. */
 export interface Call {
@@ -98,7 +98,7 @@ export function checkCall(workflow: ConfigFile): Call {
         {
           file: CI_WORKFLOW,
           message:
-            "no job calls gokayo43/dev-config/.github/workflows/check.yml pinned to a 40-character commit SHA — a tag is a name someone else can repoint",
+            "no job calls zerefukun/dev-config/.github/workflows/check.yml pinned to a 40-character commit SHA — a tag is a name someone else can repoint",
         },
       ],
     };
