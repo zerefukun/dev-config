@@ -59,7 +59,7 @@
     "lint": "oxlint --report-unused-disable-directives-severity=error",
     "typecheck": "bun check --no-script",
     "knip": "knip",
-    "check": "bun run format:check && bun run lint && bun run typecheck && bun run knip",
+    "check": "bun tests/bun-floor.main.ts && bun run format:check && bun run lint && bun run typecheck && bun run knip",
     "test": "bun test",
     "prepare": "lefthook install || true"
   },
