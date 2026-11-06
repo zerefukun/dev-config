@@ -39,7 +39,6 @@
         "oxfmt": ">=0.63",
         "oxlint": ">=1.80",
         "oxlint-tsgolint": ">=7",
-        "typescript": ">=7",
       },
       "optionalPeers": [
         "@playwright/test",
@@ -52,7 +51,6 @@
         "oxfmt",
         "oxlint",
         "oxlint-tsgolint",
-        "typescript",
       ],
     },
   },

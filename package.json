@@ -1,6 +1,6 @@
 {
   "name": "@zerefukun/dev-config",
-  "version": "0.74.1",
+  "version": "0.75.1",
   "description": "Shared TypeScript, oxlint, oxfmt, knip, Renovate and Lighthouse configuration for Bun projects.",
   "license": "MIT",
   "repository": {
@@ -57,9 +57,9 @@
     "format": "oxfmt",
     "format:check": "oxfmt --check",
     "lint": "oxlint --report-unused-disable-directives-severity=error",
-    "typecheck": "tsc --noEmit",
+    "typecheck": "bun check --no-script",
     "knip": "knip",
-    "check": "bun run format:check && bun run lint && bun run typecheck && bun run knip",
+    "check": "bun tests/bun-floor.main.ts && bun run format:check && bun run lint && bun run typecheck && bun run knip",
     "test": "bun test",
     "prepare": "lefthook install || true"
   },
@@ -97,8 +97,7 @@
     "knip": ">=6",
     "oxfmt": ">=0.63",
     "oxlint": ">=1.80",
-    "oxlint-tsgolint": ">=7",
-    "typescript": ">=7"
+    "oxlint-tsgolint": ">=7"
   },
   "peerDependenciesMeta": {
     "@playwright/test": {
@@ -130,12 +129,9 @@
     },
     "oxlint-tsgolint": {
       "optional": true
-    },
-    "typescript": {
-      "optional": true
     }
   },
-  "packageManager": "bun@1.4.0",
+  "packageManager": "bun@1.4.4",
   "lifecycle": "dev",
   "trustedDependencies": [
     "re2"
