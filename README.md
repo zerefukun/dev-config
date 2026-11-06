@@ -12,11 +12,13 @@ consumed exactly as they are committed:
 
 ```sh
 bun add -d github:zerefukun/dev-config \
-  typescript oxlint oxlint-tsgolint oxfmt knip \
+  oxlint oxlint-tsgolint oxfmt knip \
   eslint-plugin-boundaries eslint-import-resolver-typescript
 ```
 
 The tools are peer dependencies, all optional: a repo installs the ones it uses.
+The type checker is not among them: it is `bun check`, which ships with Bun
+([TypeScript](#typescript)).
 `oxlint-tsgolint` is not optional in practice — without it `oxlint` skips every
 type-aware rule (see below). A repo that builds its pages with Tailwind adds
 `@shadcn/lint` ([Design system](#design-system)).
@@ -27,7 +29,7 @@ to override a shared setting, the override carries a comment naming the reason.
 
 | File                           | Consumed by    | How                                        |
 | ------------------------------ | -------------- | ------------------------------------------ |
-| `tsconfig.base.json`           | `tsc`          | `extends` by package name                  |
+| `tsconfig.base.json`           | `bun check`    | `extends` by package name                  |
 | `oxlint.base.json`             | `oxlint`       | `extends` by `node_modules` path           |
 | `anti-slop/`                   | `oxlint`       | `jsPlugins` in `oxlint.base.json`          |
 | `design-system.base.json`      | `oxlint`       | `extends` beside it, in a Tailwind repo    |
@@ -49,6 +51,7 @@ settings every repo shares; what a single gate asserts, and why, lives beside it
 | `compose-lint`        | [docs/gates/compose-lint.md](docs/gates/compose-lint.md)                                                                                                                                                                                                                                                           |
 | `db-gate`             | [docs/gates/db-gate.md](docs/gates/db-gate.md), plus [upgrade-path.md](docs/gates/upgrade-path.md), [capacity.md](docs/gates/capacity.md), [route-compat.md](docs/gates/route-compat.md) and [fuzz.md](docs/gates/fuzz.md) for the replay, the ramp it can add, the routes it holds and the junk it throws at them |
 | `mutation-lane`       | [docs/gates/mutation-lane.md](docs/gates/mutation-lane.md)                                                                                                                                                                                                                                                         |
+| `duplicate-code`      | [docs/gates/duplicate-code.md](docs/gates/duplicate-code.md)                                                                                                                                                                                                                                                       |
 | `test-suite`          | [docs/gates/test-suite.md](docs/gates/test-suite.md)                                                                                                                                                                                                                                                               |
 
 Beside the gates CI runs are the modules a consuming repo **imports**. A gate
@@ -80,6 +83,16 @@ whenever the lockfile does. Anything a repo calls directly is one of these
 instead.
 
 ## TypeScript
+
+The type checker is `bun check`, Bun's port of TypeScript 7's checker, which
+reports what `tsc` reports. A repo's `typecheck` script is `bun check
+--no-script`: without the flag, `bun check` runs the repo's own `check` script,
+and that script runs `typecheck`. The flag arrived in Bun 1.4.4, a release after
+the command, and 1.4.3 hands it to the `check` script instead. So a repo
+installs no `typescript` to type-check, and the repo contract holds the script
+and a `packageManager` of `bun@1.4.4` or later. A repo adds `typescript` only
+for a tool that calls its API; this one does, because tsdown's declaration pass
+builds the `.d.ts` files in `dist/` with it.
 
 `tsconfig.base.json` resolves through Node module resolution, so it is referenced
 by package name:
@@ -571,7 +584,7 @@ finding it was written for and quietly widens: the rule it names stops applying
 to that line for the next person who writes there.
 
 Type-aware rules need resolved types, so a repo whose types come from generated
-code runs its codegen before linting, exactly as it does before `tsc`.
+code runs its codegen before linting, exactly as it does before `bun check`.
 
 ### The anti-slop plugin
 
@@ -812,7 +825,7 @@ Two facts about how it is wired, both load-bearing:
 - **The plugin is JavaScript, not TypeScript.** Node refuses to strip types from
   any file under `node_modules` (`ERR_UNSUPPORTED_NODE_MODULES_TYPE_STRIPPING`),
   and this directory is inside `node_modules` for every repo that consumes it.
-  `tsc` still checks it in this repo, through `checkJs` and JSDoc types.
+  `bun check` still checks it in this repo, through `checkJs` and JSDoc types.
 
 `tests/anti-slop.test.ts` drives the unscoped rules with the real binary: a block of cases
 per rule — alias chains, shadowed built-ins, type parameters bound by default,
@@ -1567,7 +1580,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: ci-${{ github.ref }}
+  group: ci-${{ github.ref }}-${{ github.event_name }}
   cancel-in-progress: true
 
 jobs:
@@ -1596,6 +1609,7 @@ it runs. Effect says which, per input.
 | `compose`             | `false`  | Holds `docker-compose.yml` to the deployment shape.                                                                                                                                                                                                                                                                                                                                                                                       |
 | `mutation-lane`       | `false`  | Mutates the domain files this branch changed and fails on a mutant its own lines left undetected, on a run whose suite was already failing unmutated, or on one that graded only part of what it mutated. Reads the pure domain from the `boundaries/elements` entry typed `domain`; needs `@stryker-mutator/core` and `@hughescr/stryker-bun-runner` among the repo's devDependencies.                                                   |
 | `mutation-floor`      | `""`     | The mutation score the changed domain files must hold, as a fraction between 0 and 1. Empty publishes the score and enforces nothing. Needs `mutation-lane: true`.                                                                                                                                                                                                                                                                        |
+| `duplicate-code`      | `false`  | Fails on a run of twelve or more lines, comments and whitespace aside, that this branch wrote and that also appears elsewhere in the repo's source. Kept by `// duplicate-code-allow -- <reason>` on the clone's first line or the line above; a file `.gitattributes` marks `linguist-generated` is not read. Needs the base ref, which `fetch-depth: 0` gives it.                                                                       |
 | `upgrade-gate`        | `false`  | Also proves that a database upgraded from the base ref's migrations reaches the schema a fresh one gets. Needs `database: postgres`; for repos whose database is deployed.                                                                                                                                                                                                                                                                |
 | `semantic-fixtures`   | `""`     | A directory of the repo's own holding the rows a deployed database already has, as base-compatible SQL, each with the assertion the current contract makes about them: written into the base ref's replay and graded after this branch's migrations run over them. Needs `upgrade-gate: true`. Needs `database: postgres`.                                                                                                                |
 | `contract-exemptions` | `""`     | Repo-contract facts this repo is structurally unable to satisfy, space-separated. A marketing site names `docs-spine`; a repo being wound down names `lifecycle-retire`.                                                                                                                                                                                                                                                                  |
@@ -1654,10 +1668,11 @@ tree, a codegen client — and a build over the changed packages alone leaves
 `lint`, `knip` and the root typecheck reading files nothing wrote this run.
 
 A repo with no `turbo.json` is refused rather than handed the flag, since
-without turbo it arrives at `tsc`. That check is the file, not the script: a
-repo that has a `turbo.json` and a `typecheck` that is still `tsc --noEmit` gets
-`--affected` passed to `tsc`, which fails with TS5023 — loudly, which is the
-better half of a wrong answer, but a wrong answer.
+without turbo it arrives at `bun check`. That check is the file, not the script:
+a repo that has a `turbo.json` and a `typecheck` that is still `bun check
+--no-script` gets `--affected` passed to `bun check`, which fails with `Unknown
+flag "--affected"` — loudly, which is the better half of a wrong answer, but a
+wrong answer.
 
 `TURBO_TELEMETRY_DISABLED` needs no input. It is set in this workflow's own
 `env:`, which is the only place a called workflow can be given one: `env:` is
@@ -1712,15 +1727,17 @@ question asked of the booted app's answers rather than of its tables.
 can see.
 
 In order, the pinned workflow runs the gitleaks scan, the declarative gates
-(repo contract, stack denylist, the workflow lint, suppression hygiene,
-shellcheck over the repo's own scripts, and the compose lint when asked), `bun install` — carrying the key
+(repo contract, stack denylist, the workflow lint, suppression hygiene, the
+duplicate-code gate when asked, shellcheck over the repo's own scripts, and the
+compose lint when asked), `bun install` — carrying the key
 for a private git dependency where the caller passed one — the optional build,
 `format:check`, `lint`, `typecheck`, `knip`, the test suite, the assertion that
 the suite ran, and — where the repo asks for it — the mutation lane over the
 domain files this branch changed.
 From `format:check` to `knip` the chain is the local `bun run check`, and the
-suite after it is the local `bun test`. CI runs both on the pull request, and
-the git hooks run none of it on push. The rest is what only CI has.
+suite after it is the local `bun test`. The git hooks run none of it on push,
+because the chain runs once, on the state that lands, at landing or in CI. The
+rest is what only CI has.
 
 The declarative gates come before `bun install` deliberately. They read the tree
 as committed, so a repo that has drifted out of the contract says so in seconds
@@ -1728,9 +1745,9 @@ rather than after a full dependency resolution.
 
 The steps that are shell or a script rather than a `bun run` live in
 `.github/actions/` as composite actions — `secret-scan`, `repo-contract`,
-`stack-gate`, `suppression-hygiene`, `shell-scripts`, `compose-lint`,
-`install`, `build`, `test-suite`, `mutation-lane`, `db-gate`, `lint-workflows`
-— so the workflow above and any repo that has to run the same thing outside it
+`stack-gate`, `suppression-hygiene`, `duplicate-code`, `shell-scripts`,
+`compose-lint`, `install`, `build`, `test-suite`, `mutation-lane`, `db-gate`,
+`lint-workflows` — so the workflow above and any repo that has to run the same thing outside it
 share one copy. `install` and `build` are the two that are not gates, and are
 actions for a reason of their own: both jobs run them, so one copy serves both
 where a copy per job could rot untested. `install` is
@@ -1752,7 +1769,7 @@ The matching scripts:
     "format": "oxfmt",
     "format:check": "oxfmt --check",
     "lint": "oxlint --report-unused-disable-directives-severity=error",
-    "typecheck": "tsc --noEmit",
+    "typecheck": "bun check --no-script",
     "knip": "knip",
     "check": "bun run format:check && bun run lint && bun run typecheck && bun run knip"
   }
@@ -1806,7 +1823,7 @@ drift.
 
 A repo whose types depend on generated code that is not committed — a TanStack
 route tree, a codegen client — passes `build: true`, since a clean checkout has
-none of it and both `tsc` and the type-aware lint rules would report the
+none of it and both `bun check` and the type-aware lint rules would report the
 generated symbols as missing. So does an app the boot gate starts, which
 serves from its build; a Next app is that case, and the reason `build-cache`'s
 example is `.next/cache`.
@@ -1972,7 +1989,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: ci-${{ github.ref }}
+  group: ci-${{ github.ref }}-${{ github.event_name }}
   cancel-in-progress: true
 
 jobs:
@@ -2022,9 +2039,9 @@ every other one the schedule keeps running through however quiet a month gets.
 Re-enabling a disabled one is a button on the workflow's page in the Actions
 tab.
 
-The `concurrency` group above is per-ref, so a push landing while the nightly
-runs cancels it — and a cancelled run files nothing, deliberately. A repo that
-wants both to survive adds `${{ github.event_name }}` to the group.
+The `concurrency` group above carries the event, as the repo contract requires,
+so a push landing while the nightly runs does not cancel it — a cancelled run
+files nothing, deliberately.
 
 #### What a red nightly does
 
@@ -2056,10 +2073,13 @@ and filing on one is how a repo collects a duplicate issue a night.
 
 ### Where each gate is written down
 
-`repo-contract`, `stack-gate`, `suppression-hygiene`, `shell-scripts`,
-`lint-workflows` and `compose-lint` run in the static job; `db-gate` is the
-database job, and the capacity ramp and the route fuzzer are steps of it. Each has its page under
-[`docs/gates/`](docs/gates/), listed in the table at the top of this file.
+`repo-contract`, `stack-gate`, `lint-workflows`, `suppression-hygiene`,
+`duplicate-code`, `shell-scripts`, `compose-lint`, `test-suite` and
+`mutation-lane` run in the static job; `db-gate` is the
+database job, and the capacity ramp and the route fuzzer are steps of it. Each
+but `lint-workflows` has its page under [`docs/gates/`](docs/gates/), listed in
+the table at the top of this file; `lint-workflows` is written down under
+"Gating this repo" above.
 
 ### Static sites
 
