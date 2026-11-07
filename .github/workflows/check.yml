@@ -263,7 +263,7 @@ jobs:
     # A caller with no runner carrying both labels queues here forever rather
     # than failing. That, and what a shared persistent machine changes about
     # server ports and the workspace: README, "Where it runs".
-    runs-on: [self-hosted, linux]
+    runs-on: ubuntu-24.04
     # An hour under the nightly, against fifteen minutes for the run somebody
     # is waiting on. The property budget is what needs it: two minutes per
     # property is a suite of them costing far more than the whole of an
@@ -532,7 +532,7 @@ jobs:
 
   database:
     if: inputs.database == 'postgres'
-    runs-on: [self-hosted, linux]
+    runs-on: ubuntu-24.04
     # Half an hour under the nightly: the fuzzer's long budget is ten minutes
     # of it, and everything before the fuzzer costs what it always costs.
     timeout-minutes: ${{ inputs.nightly && 30 || 15 }}
