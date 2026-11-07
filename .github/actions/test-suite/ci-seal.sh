@@ -34,6 +34,8 @@ tmpdir=$4
 [ "${5-}" = -- ] && [ $# -ge 6 ] || usage
 shift 5
 
+# The positional parameters below are the inner bash's, expanded there.
+# shellcheck disable=SC2016
 exec unshare --net -- /bin/bash -c '
   set -e
   ip link set lo up
