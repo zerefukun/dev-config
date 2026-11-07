@@ -1240,11 +1240,11 @@ bun .github/actions/services/services.main.ts stop "$root" /dev/null
 ```
 
 Both listen on `127.0.0.1` alone, each on a port the kernel picked, so nothing
-off the box reaches them and the two pairs never collide.
+off the machine reaches them and the two pairs never collide.
 
 The preset suite runs Renovate's validator with the `re2` addon, which `bun
 install` builds from source, so a machine running it carries `g++`, `make`,
-`python3` and its Node's headers, as "Where it runs" lists for the runner.
+`python3` and its Node's headers, as "Where it runs" lists for the hosted image.
 
 The invariant sweep's suite and the count budget's browser suite drive a real
 browser against a real server, because what those fixtures claim is a browser
@@ -1256,12 +1256,18 @@ with:
 ./node_modules/.bin/playwright install chromium-headless-shell
 ```
 
-No `--with-deps`: it shells out to `sudo apt-get`, which the CI runner's account
-may not run, and the shared libraries it installs are already on the box.
+A machine missing the browser's shared libraries adds `--with-deps`, which
+installs them through `sudo apt-get`, as CI does.
 
-The test-suite gate's own suite needs the `ci-seal` helper and its sudoers line
-("Where it runs"), which is what taking a network namespace costs — a runner
-has them, and a machine that does not cannot run the sealed cases honestly. The
+The test-suite gate's own suite needs the `ci-seal` helper where the action
+installs it, and sudo that runs it without a password, which is what taking a
+network namespace costs:
+
+```sh
+sudo install -o root -g root -m 0755 .github/actions/test-suite/ci-seal.sh /usr/local/sbin/ci-seal
+```
+
+A machine without them cannot run the sealed cases honestly. The
 cases about the call itself (what the step hands the helper) put a stand-in
 `sudo` on `PATH` and run anywhere. It is the one gate here whose subject is not
 a module, so its cases extract the step out of the shipped `action.yml` and
@@ -1481,92 +1487,80 @@ the whole of its CI:
 
 ### Where it runs
 
-Every job in `check.yml` and in this repo's own `ci.yml` declares
-`runs-on: [self-hosted, linux]`. **A caller needs a runner carrying both labels,
-or its jobs queue until one appears** — there is no timeout on a queued job, so
-the symptom is a run that never starts rather than one that fails. dev-config#88
-is where the move is argued.
+Every job in `check.yml`, in `nightly-issue.yml` and in this repo's own `ci.yml`
+declares `runs-on: ubuntu-24.04`: GitHub's hosted runner, a fresh virtual
+machine per job that is discarded when the job ends. A caller provides no
+machine. The label is pinned rather than `ubuntu-latest`, which GitHub moves to
+a new Ubuntu release on its own schedule (the move to 26.04 is announced for
+November 2026), because the image is part of what the gates grade: its
+PostgreSQL major, its Node, its kernel. The label moves in a release of this
+repo of its own, with the `services` action's major checks and this section
+read against the new image's README in actions/runner-images.
 
-**The runner provides no container runtime, and needs none.** The database
-job's Postgres and Redis are the runner's own binaries, started by the
-`services` action, so a runner carrying the labels also carries:
+**What the image provides, and what the actions install.** Read off
+actions/runner-images' `images/ubuntu/Ubuntu2404-Readme.md` (image
+20261101.360.1):
 
-- PostgreSQL 16's `initdb`, `pg_ctl`, `postgres` and `pg_dump` on the job's
-  `PATH` (Debian's packages put them in `/usr/lib/postgresql/16/bin`, which the
-  runner adds to `PATH` itself — one place decides where every step finds
-  them);
-- `redis-server` 7 on the job's `PATH`;
-- no system instance of either holding a port it would want, an account that
-  is not root, since `initdb` refuses one, and Linux's `/proc`, which `stop`
-  reads to make sure a pid is still the server it was written for.
+| Needed by                                 | What                                                                  | Where it comes from                                                                                             |
+| ----------------------------------------- | --------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------- |
+| `services`, the replay and backfill gates | PostgreSQL 16's `initdb`, `pg_ctl`, `postgres`, `pg_dump`             | the image, under `/usr/lib/postgresql/16/bin`, service disabled; `services` puts the directory on `GITHUB_PATH` |
+| `services`                                | `redis-server` 7                                                      | `services` installs Ubuntu's package with apt, its unit masked first                                            |
+| `test-suite`, this repo's suite           | the `ci-seal` helper at `/usr/local/sbin/ci-seal`                     | `test-suite` installs `ci-seal.sh` from beside it; this repo's `ci.yml` the same                                |
+| `test-suite`                              | passwordless sudo, `unshare`, `setpriv`, `ip`                         | the image                                                                                                       |
+| every job, Playwright under node          | Node 24, which parses `await using` (the image's default 22 does not) | `actions/setup-node`, from the image's tool cache                                                               |
+| this repo's `bun install` (`re2`)         | `g++`, `make`, `python3`, Node 24's headers                           | the image                                                                                                       |
+| this repo's browser suites                | Playwright's headless chromium and its libraries                      | `ci.yml`, with `playwright install --with-deps`                                                                 |
+| `build`                                   | the build tool's cache                                                | GitHub's Actions cache, through `actions/cache`                                                                 |
 
-This repo's own CI needs two things more. Its `bun install` builds the `re2`
-addon Renovate's validator grades regexes with, so the runner carries a C++
-toolchain (`g++`, `make`, `python3`) and the headers of its own Node under the
-Node's prefix (`include/node`, which the official tarball and NodeSource's
-package ship; Debian's `nodejs` needs `libnode-dev` and `libuv1-dev`). And its
-browser suites run Playwright's headless chromium, whose shared libraries the
-runner provides, since nothing here runs `--with-deps`.
+The `services` action refuses a Postgres that is not 16 and a Redis that is not
+7 by name: an image carrying another major would grade every repo against a
+server its production does not run, and say nothing.
 
-The action refuses a Postgres that is not 16 and a Redis that is not 7 by
-name: a runner carrying another major would grade every repo against a server
-its production does not run.
+**The suite is sealed through the `ci-seal` helper.** It lives beside the
+test-suite action as `ci-seal.sh`, and the action's first step installs it as
+`/usr/local/sbin/ci-seal`, root-owned. It takes `--path P --tmpdir T -- CMD
+[ARGS…]` and runs `CMD` as the user that invoked it, in a fresh network
+namespace with only `lo` up, with exactly that `PATH` and `TMPDIR`, and passes a
+termination signal on to it, since the step cancels the suite by signalling
+the helper. The job owns the machine and its account has passwordless sudo, so
+the helper is not a privilege boundary: what it does is isolate the suite from
+the network, and give up root again before the suite runs, so nothing the
+suite writes lands root-owned in the workspace. docs/gates/test-suite.md has
+the step's side of the call.
 
-**The static job seals the suite through the runner's `ci-seal` helper**, so
-every runner carries it, and grants nothing wider:
-
-- `/usr/local/sbin/ci-seal`, owned by root and writable by nobody else, taking
-  `--path P --tmpdir T -- CMD [ARGS…]`. It runs `CMD` as the user that invoked
-  it, in a fresh network namespace with only `lo` up, with exactly that `PATH`
-  and `TMPDIR`, and passes a termination signal on to it, since the step
-  cancels the suite by signalling the helper.
-- One sudoers line, and no other: the runner's account may run that path
-  without a password — for example
-  `ci ALL=(root) NOPASSWD: /usr/local/sbin/ci-seal`. A grant of `unshare`
-  would hand root to whatever a pull request's suite runs; this one hands it a
-  namespace.
-- A `TMPDIR` in the runner's environment that names an exec-able directory the
-  runner's account owns, wherever `/tmp` is `noexec`: suites build fixtures
-  there and run them, and the step hands it into the seal.
-
-docs/gates/test-suite.md has the step's side of the call.
-
-Five things follow from the runner being a shared, persistent machine rather
-than a fresh cloud VM, and they are why the workflows look the way they do:
+The rest of the shape holds on a machine the job has to itself:
 
 - **The servers listen on `127.0.0.1` alone, on ports the kernel picked**,
   never on a fixed one. Postgres's default `localhost` and Redis's default of
-  every interface would answer from off the box, and a fixed port is
-  single-occupancy where two runners' jobs overlapping is the ordinary case.
-  The action binds port 0, reads the assignment back and hands it to the
-  server; another process taking the port in between is a race the server's
-  own refusal reports, and the action answers it with a fresh port, five times
-  before it fails. The URLs are the action's outputs,
+  every interface would answer from off the machine, and a fixed port is
+  whatever else is already listening: a server a suite or the app's start
+  command brings up in the same job, or, since the action and this repo's
+  suite also run on developers' machines ("Gating this repo"), their own
+  Postgres on 5432. The action binds port 0, reads the assignment back and
+  hands it to the server; another process taking the port in between is a race
+  the server's own refusal reports, and the action answers it with a fresh
+  port, five times before it fails. The URLs are the action's outputs,
   `${{ steps.services.outputs.database-url }}` and `redis-url`.
 - **The boot gate's app gets an allocated port too.** `health-url` defaults to
   `http://localhost:${PORT}/api/health`, where `PORT` is a free port the job
-  bound and exported before the gate runs. 3000 is the framework default and
-  therefore the port something else on a shared box already holds. `PORT` is the
+  bound and exported before the gate runs, for the same reason. `PORT` is the
   platform convention; an app that ignores it needs `start-command` and
   `health-url` set explicitly.
-- **The workspace is not discarded when the run ends.** What cleans it is
-  `actions/checkout` at the start of the next run.
-- **The servers' data lives under `RUNNER_TEMP` and dies with the job.** The
+- **The servers' data lives under `RUNNER_TEMP`**, the directory the runner
+  gives the job for its own files, outside the workspace the gates read. The
   `services` action's `stop`, the job's last step under `if: always()`, takes
-  both servers down and deletes their directory, so a job that failed leaves
-  nothing running and nothing on the disk; a job that failed before `start`
-  ran has nothing to stop, and the step is nothing at all. Durability is off
-  (`fsync`, `full_page_writes`, `synchronous_commit`), since nothing there
-  outlives the job.
-- **A build cache lives on the runner's own disk.** The `build` action keeps
-  the paths `build-cache` names in the runner's tool cache (`RUNNER_TOOL_CACHE`),
-  one store per runner, so a runner's first run builds cold and the runs after
-  it build warm, and two runners each warm their own. A store that is missing
-  or cannot be read is a cold build with a warning, never a failure.
-
-The Lighthouse example under "Static sites" deliberately stays on
-`ubuntu-latest`: its numbers are the assertion, and a box that is also serving
-production moves them for reasons no commit caused.
+  both servers down and deletes their directory, so the job ends with nothing
+  of its own running rather than leaving the runner to reap two daemons as
+  orphans; a job that failed before `start` ran has nothing to stop, and the
+  step is nothing at all. Durability is off (`fsync`, `full_page_writes`,
+  `synchronous_commit`), since nothing there outlives the job.
+- **The build cache lives in GitHub's Actions cache.** The `build` action
+  restores the paths `build-cache` names before the build and saves them after
+  one that passed, keyed on `bun.lock` with a suffix unique to each save, and
+  restores the newest save under the lockfile's key; GitHub never overwrites an
+  entry and evicts the least recently used past the repository's quota. A
+  cache that cannot be read or written is a cold build with a warning, never a
+  failure.
 
 ```yaml
 name: CI
@@ -1980,9 +1974,8 @@ on:
     branches: [main]
   pull_request:
   schedule:
-    # 02:00 UTC is the fleet's slot: after the day's work, and finished well
-    # before this box's 04:00 reboot window. The runner slice these jobs share
-    # is CPU-capped, so the repos in it queue rather than compete.
+    # 02:00 UTC is the fleet's slot: after the day's work, so a red nightly
+    # is waiting when the next day starts.
     - cron: "0 2 * * *"
 
 permissions:
@@ -2103,7 +2096,7 @@ concurrency:
 
 jobs:
   lighthouse:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1

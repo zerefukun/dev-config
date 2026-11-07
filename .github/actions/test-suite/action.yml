@@ -49,6 +49,14 @@ inputs:
 runs:
   using: composite
   steps:
+    # The helper the suite is sealed through, the copy at this commit. The job
+    # owns the machine and its account has passwordless sudo, so this is not a
+    # privilege boundary; it is one root-owned script that takes the namespace
+    # and hands the command back as this user. docs/gates/test-suite.md.
+    - name: Install the seal
+      shell: bash
+      run: sudo install -o root -g root -m 0755 "$GITHUB_ACTION_PATH/ci-seal.sh" /usr/local/sbin/ci-seal
+
     - name: Run the suite
       shell: bash
       working-directory: ${{ inputs.working-directory }}
@@ -149,17 +157,16 @@ runs:
           esac
           echo "::notice::the suite reaches a real network: $reason"
         else
-          # The runner's ci-seal helper, the one thing here that is root: it
-          # runs the command back as this user, in a fresh network namespace
-          # with only `lo` up, with exactly the PATH and TMPDIR it is handed.
-          # Both are restated because sudo resets the environment, and an
-          # unset TMPDIR is /tmp, which is what a process reads it as. The
-          # runner's side of it — the helper and its sudoers line — is
-          # README's "Where it runs".
+          # The ci-seal helper the step above installed, the one thing here
+          # that is root: it runs the command back as this user, in a fresh
+          # network namespace with only `lo` up, with exactly the PATH and
+          # TMPDIR it is handed. Both are restated because sudo resets the
+          # environment, and an unset TMPDIR is /tmp, which is what a process
+          # reads it as.
           seal=(sudo --non-interactive /usr/local/sbin/ci-seal
             --path "$PATH" --tmpdir "${TMPDIR:-/tmp}" --)
           if ! "${seal[@]}" true 2>/dev/null; then
-            echo "::error::the suite is run sealed in a network namespace, which needs the runner's /usr/local/sbin/ci-seal helper and a sudoers line letting this user run it without a password (README, \"Where it runs\") — and a suite that genuinely reaches a network says so in the test-network input instead"
+            echo "::error::the suite is run sealed in a network namespace, and /usr/local/sbin/ci-seal could not take one: this needs passwordless sudo for the helper, which GitHub's hosted runners give the job (docs/gates/test-suite.md); a suite that genuinely reaches a network says so in the test-network input instead"
             exit 1
           fi
         fi

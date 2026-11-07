@@ -298,6 +298,10 @@ describe("stop", () => {
     await using run = await scratch();
     await mkdir(join(run.root, "postgres"), { recursive: true });
     await using bystander = Bun.spawn(["sleep", "30"]);
+    // The spawn returns before the child has exec'd, and until it has, its
+    // /proc entry still names the parent's program rather than sleep.
+    // oxlint-disable-next-line anti-slop/no-real-timers -- the wait is for a real process's exec, which no virtual clock advances
+    while (!runs(bystander.pid, "sleep")) await Bun.sleep(5);
     await Bun.write(join(run.root, "postgres", "postmaster.pid"), `${bystander.pid}\n`);
     await Bun.write(join(run.root, "redis.pid"), `${bystander.pid}\n`);
     await stop(run.root);

@@ -12,7 +12,7 @@ import { materialise, type Tree } from "./tree.ts";
  * grade is whether the namespace the shipped YAML names actually holds, which
  * is the whole of what this gate claims.
  */
-// Every case here is a process tree: bash, sudo, the runner's ci-seal helper and
+// Every case here is a process tree: bash, sudo, the ci-seal helper and
 // a `bun test` inside all of it. With the machine to itself the whole suite is under
 // three seconds, and inside a full run — behind the browser, the mutation lane
 // and three suites that drive a real Postgres — a single spawn has been seen to
@@ -27,11 +27,13 @@ const STEP = await (async (): Promise<string> => {
   const document = Bun.YAML.parse(await Bun.file(ACTION).text());
   const steps = record(record(document)["runs"])["steps"];
   const scripts = (Array.isArray(steps) ? steps : [])
-    .map((step) => record(step)["run"])
+    .map((step) => record(step))
+    .filter((step) => step["name"] === "Run the suite")
+    .map((step) => step["run"])
     .filter((run): run is string => typeof run === "string");
   const [script, ...rest] = scripts;
   if (script === undefined || rest.length > 0) {
-    throw new Error(`test-suite has ${scripts.length} run steps, not one`);
+    throw new Error(`test-suite has ${scripts.length} steps named "Run the suite", not one`);
   }
   return script;
 })();
@@ -308,10 +310,10 @@ test("unreached", () => {
 // console: what makes the first case the coverage floor and not some other
 // failure is that the run's own record says nothing in it failed.
 /**
- * A `sudo` of the suite's own, first on PATH, standing in for the runner's
- * sudo and its ci-seal helper: the helper is the runner's, so the call the
- * step makes to it is graded here and the namespace it takes is graded by the
- * sealed cases above, on a runner that has it. It logs each call, one argument
+ * A `sudo` of the suite's own, first on PATH, standing in for sudo and the
+ * ci-seal helper: the call the step makes to it is graded here, on any
+ * machine, and the namespace it takes is graded by the sealed cases above,
+ * where the helper is installed. It logs each call, one argument
  * a line, refuses any call that is not the helper's documented shape, and runs
  * the command the way the helper promises to — with that PATH and TMPDIR and
  * nothing else — or fails every call when `refuse` is set.
@@ -357,8 +359,8 @@ test("reads its TMPDIR", () => {
 `,
 };
 
-// The wrong implementations: the old `sudo unshare --net …` shape, which makes
-// a runner grant root to whatever follows it; a call that drops TMPDIR, so a
+// The wrong implementations: a bare `sudo unshare --net …`, which runs the
+// suite as root rather than through the helper; a call that drops TMPDIR, so a
 // runner whose /tmp is noexec has every suite that runs a fixture it wrote
 // fail inside the seal; a probe that asks sudo for something other than the
 // helper, which passes on a runner the run itself then fails on; and an unset
@@ -400,9 +402,9 @@ describe("the call the step makes to the seal", () => {
     expect(probe?.slice(4, 6)).toEqual(["--tmpdir", "/tmp"]);
   });
 
-  test("fails the step by name on a runner without the helper", async () => {
+  test("fails the step by name when the helper cannot take the namespace", async () => {
     const { status, output } = await ran(READS_TMPDIR, "", "", "false", standIn(true));
-    expect(output).toContain("needs the runner's /usr/local/sbin/ci-seal helper");
+    expect(output).toContain("/usr/local/sbin/ci-seal could not take one");
     expect(status).not.toBe(0);
   });
 });

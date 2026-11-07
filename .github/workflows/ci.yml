@@ -21,7 +21,7 @@ concurrency:
 
 jobs:
   check:
-    runs-on: [self-hosted, linux]
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
 
     steps:
@@ -36,6 +36,13 @@ jobs:
       - uses: ./.github/actions/secret-scan
 
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+
+      # Node 24 rather than the image's default 22, which cannot parse the
+      # `await using` the count budget's Playwright suite loads under node;
+      # check.yml's static job says the same for a consumer.
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
 
       # This repo runs its own gates on itself, from the working tree. A gate
       # its author's repo cannot pass is a gate nobody should be asked to.
@@ -76,8 +83,10 @@ jobs:
       # trustedDependencies): Renovate's regexes are graded with it, and the
       # suite's preset case fails without it. Under bun its prebuilt download
       # finds no repository to fetch from, so it builds from the sources in its
-      # lockfile-pinned tarball, against the headers of the runner's own Node
-      # rather than ones node-gyp would download.
+      # lockfile-pinned tarball with the image's g++, make and python3, against
+      # the headers the Node set up above carries under its own prefix (`include/node`)
+      # rather than ones node-gyp would download (actions/runner-images,
+      # images/ubuntu/Ubuntu2404-Readme.md).
       - run: |
           set -euo pipefail
           npm_config_nodedir=$(dirname "$(dirname "$(readlink -f "$(command -v node)")")")
@@ -87,12 +96,10 @@ jobs:
       # The invariant sweep this repo exports is a Playwright fixture, and what
       # its suite grades is what a browser reports — so the suite drives one.
       # The headless shell rather than the full chromium: nothing here opens a
-      # window, and it is the smaller download.
-      #
-      # No `--with-deps`: it shells out to `sudo apt-get`, and the runner user
-      # here may not run apt. The shared libraries it would install are already
-      # on the box, which is what lets the browser suites pass without it.
-      - run: ./node_modules/.bin/playwright install chromium-headless-shell
+      # window, and it is the smaller download. `--with-deps` installs the
+      # shared libraries it needs through `sudo apt-get`, which the job's
+      # account on a hosted runner may run.
+      - run: ./node_modules/.bin/playwright install --with-deps chromium-headless-shell
 
       # The gates this repo ships are TypeScript, and their suite is what proves
       # each one refuses a violating tree and passes a clean one. Every other
@@ -108,6 +115,11 @@ jobs:
         with:
           command: start
 
+      # The test-suite gate's own cases take a network namespace through the
+      # helper the test-suite action installs, so this job installs the same
+      # copy the same way.
+      - run: sudo install -o root -g root -m 0755 .github/actions/test-suite/ci-seal.sh /usr/local/sbin/ci-seal
+
       # `--coverage` by hand: it is the one guarantee of the substituted action
       # this step does keep, and without it the floor above it declares is
       # applied to nothing. docs/gates/test-suite.md.
@@ -115,8 +127,9 @@ jobs:
         env:
           # Neither has a default, deliberately: the conformance suite flushes
           # its Redis and the database suites drop databases on their server,
-          # and `localhost` on a box that runs other things is not a safe thing
-          # for either to assume. Both are the instances the step above started.
+          # and `localhost` on a machine that runs other things, a developer's,
+          # is not a safe thing for either to assume. Both are the instances the
+          # step above started.
           TEST_DATABASE_URL: ${{ steps.services.outputs.database-url }}
           TEST_REDIS_URL: ${{ steps.services.outputs.redis-url }}
 
