@@ -21,7 +21,7 @@ on:
       build-cache:
         description: >-
           Paths the build tool caches in, one per line and relative to the repository
-          root, such as `.next/cache` for a Next app. Restored from the runner's tool
+          root, such as `.next/cache` for a Next app. Restored from GitHub's Actions
           cache before the build and saved there after one that passed, keyed on
           bun.lock. Needs `build: true`, and is refused without it.
         type: string
@@ -260,16 +260,14 @@ env:
 
 jobs:
   static:
-    # A caller with no runner carrying both labels queues here forever rather
-    # than failing. That, and what a shared persistent machine changes about
-    # server ports and the workspace: README, "Where it runs".
+    # Pinned rather than ubuntu-latest, which moves to another release on
+    # GitHub's schedule: README, "Where it runs".
     runs-on: ubuntu-24.04
     # An hour under the nightly, against fifteen minutes for the run somebody
     # is waiting on. The property budget is what needs it: two minutes per
     # property is a suite of them costing far more than the whole of an
     # ordinary run, and a bound left at fifteen would cancel the long search
-    # rather than shorten it. It still has to end well before this box's 04:00
-    # reboot window, which is why the schedule README documents is 02:00.
+    # rather than shorten it.
     timeout-minutes: ${{ inputs.nightly && 60 || 15 }}
 
     # `--affected` is turbo's, and it is a CLI flag with no environment form — so
@@ -566,18 +564,18 @@ jobs:
       # Empty on every run, which is the one state no developer database is
       # ever in. Redis is started unconditionally — the API shape pings it from
       # its health route, and an idle one costs a moment. Both listen on
-      # 127.0.0.1 alone, on ports the kernel picked, so nothing off the box
-      # reaches them and two overlapping jobs never collide; README's "Where it
-      # runs" has the rest.
+      # 127.0.0.1 alone, on ports the kernel picked, so nothing off the machine
+      # reaches them and nothing else the job starts collides with them;
+      # README's "Where it runs" has the rest.
       - id: services
         uses: zerefukun/dev-config/.github/actions/services@40a5c2d47d007b7eb77c27c15812efbe5719aec3 # v0.75.0
         with:
           command: start
 
       # The port the boot gate's app listens on, picked by the kernel rather
-      # than stated. 3000 is the framework default and therefore the one port
-      # every other service on a shared box has already taken; it is also what
-      # two of these jobs would collide on. Binding port 0 and reading the
+      # than stated. 3000 is the framework default and therefore the port
+      # anything else in the job, a server the start command brings up beside
+      # the app, is likeliest to want. Binding port 0 and reading the
       # assignment back is the only way to name a port nothing else holds —
       # asking whether a fixed one is free and then using it is a race.
       #

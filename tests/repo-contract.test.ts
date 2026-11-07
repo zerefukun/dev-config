@@ -254,8 +254,7 @@ describe("repo contract", () => {
 });
 
 describe("the CI workflow cancels a run a newer push replaced", () => {
-  const CANCEL =
-    "`cancel-in-progress: true` — every CI run of a repo queues on its one self-hosted runner";
+  const CANCEL = "`cancel-in-progress: true` — a run a newer push has replaced holds a runner";
   const GROUP =
     "has to name both `github.ref` and `github.event_name`, each inside `${{ }}`, as `ci-${{ github.ref }}-${{ github.event_name }}` does — the ref keeps a push from cancelling another branch's run, and the event keeps a push from cancelling a nightly and a nightly from cancelling a push";
 

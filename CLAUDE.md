@@ -50,14 +50,14 @@ a change to a rule usually lands here too.
   step whose logic is TypeScript runs a `*.main.ts` over the modules the suite
   drives. A step that is shell runs it as a body: inline in `action.yml` for
   `secret-scan`, `install` and `test-suite`, or as a script beside it for
-  `build` (`build/build.sh`). A new shell action takes the script shape, since
+  `build` (`build/cache-paths.sh`). A new shell action takes the script shape, since
   a file is what the suite can run and the shell-scripts gate reads, where an
   inline body is reached only by extracting it. `install` and `build` are the
   two that grade nothing. `install` is `bun install --frozen-lockfile`, and —
   where the caller passed a key for a private git dependency — that key,
   written, used and removed inside the action's own shell so no lane after it
   runs holding the path of a private key. `build` is `bun run build` with the
-  paths the caller names kept in the runner's tool cache between runs. They are
+  paths the caller names kept in GitHub's Actions cache between runs. They are
   actions because both jobs of `check.yml` run them, and one copy serves both
   where a copy per job rots untested (#101). An action holds
   more than one module when it holds more than one subject:
@@ -205,8 +205,8 @@ a change to a rule usually lands here too.
   config cannot carry the reason, so it is here.
 - `tests/` — a fixture suite per gate, driving it against a violating tree and a
   clean one. A gate without one is a claim. `build-cache.test.ts` is the build
-  action's, running `build.sh` against a fixture repository whose build records
-  what the cache held when it started. `anti-slop.test.ts`,
+  action's, running `cache-paths.sh` against a fixture checkout for the keys and
+  paths it hands actions/cache, and reading the action's step order. `anti-slop.test.ts`,
   `anti-slop-test-smells.test.ts`, `anti-slop-env.test.ts` and
   `lint-policy.test.ts` hold every lint rule in `anti-slop/` to the same bar — a
   block of cases per rule, split where the base splits, since the rules scoped to
@@ -255,7 +255,7 @@ a change to a rule usually lands here too.
   nothing about the tool that gate exists to drive. `test-suite.test.ts` is the
   same argument one level down: that gate is a shell script rather than a
   module, so the suite extracts the step out of the shipped `action.yml` and
-  runs it over fixture suites of its own. It needs the runner's ci-seal helper, because
+  runs it over fixture suites of its own. It needs the ci-seal helper installed, because
   what it is grading is a network namespace. `nightly-issue.test.ts` is that
   argument once more, over the one step in this repo whose subject is an effect
   that leaves the system: it extracts the filing step out of its workflow and

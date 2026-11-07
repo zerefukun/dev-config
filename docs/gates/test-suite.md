@@ -59,8 +59,9 @@ own ports are on the other loopback either way: a server the runner started on
 `127.0.0.1` is not reachable from inside the namespace, which is the same
 statement as "this lane has no database".
 
-The seal is taken by the runner's `ci-seal` helper, and the step's one call to
-it is:
+The seal is taken by the `ci-seal` helper, `ci-seal.sh` beside the action,
+which the action's first step installs as `/usr/local/sbin/ci-seal`. The run
+step's one call to it is:
 
 ```sh
 sudo --non-interactive /usr/local/sbin/ci-seal --path "$PATH" --tmpdir "${TMPDIR:-/tmp}" -- CMD ARGS…
@@ -70,20 +71,20 @@ Three facts about it, all load-bearing if the step is ever edited:
 
 - **Only the helper is root.** Creating a network namespace needs privilege:
   the unprivileged form (`unshare --map-root-user`) is refused where AppArmor's
-  `kernel.apparmor_restrict_unprivileged_userns` reads `1`. The step used to
-  take it as `sudo unshare --net`, which made the runner grant `unshare` with
-  any command after it — root for whatever a pull request's suite runs. The
-  helper is root-owned and does one thing, so the grant is that one path. A
-  runner without it fails the step by name rather than running unsealed.
+  `kernel.apparmor_restrict_unprivileged_userns` reads `1`. On GitHub's hosted runners the job's account has passwordless sudo
+  and the job owns the machine, so the helper is not a privilege boundary: it
+  isolates the suite from the network, and is the one place that takes the
+  namespace and gives up root again. A machine where it cannot take one fails
+  the step by name rather than running unsealed.
 - **The suite runs as the invoking user.** The helper hands the command back
   to the user that called it, so nothing the suite writes — coverage,
   snapshots, the junit report — lands root-owned in a workspace the steps after
   it still have to write to.
 - **`PATH` and `TMPDIR` are handed across, and nothing else is promised.**
   `sudo` resets the environment, so the step restates both: `PATH` because the
-  Bun the runner installed is not on `secure_path`, `TMPDIR` because a runner
-  that points it somewhere deliberate — an exec-able directory beside a
-  `noexec` `/tmp`, a larger disk — means every process to see it, the suite's
+  Bun setup-bun installed is not on `secure_path`, `TMPDIR` because a machine
+  that points it somewhere deliberate (an exec-able directory beside a
+  `noexec` `/tmp`, a larger disk) means every process to see it, the suite's
   included. Unset, the step hands `/tmp`, which is what a process reads an
   unset `TMPDIR` as.
 

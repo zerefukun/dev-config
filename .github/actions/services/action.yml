@@ -1,11 +1,10 @@
 name: Services
 description: >-
-  A throwaway PostgreSQL 16 and Redis 7 for one job, run from the runner's own
-  binaries under RUNNER_TEMP and listening on 127.0.0.1 alone, each on a port
-  the kernel picked. `start` hands back their URLs as outputs; `stop`, in a step
-  under `always()`, takes both down and deletes their data. The runner provides
-  PostgreSQL 16's initdb, pg_ctl and postgres and redis-server 7 on the job's
-  PATH. README's "Where it runs" has why it is this shape.
+  A throwaway PostgreSQL 16 and Redis 7 for one job, run under RUNNER_TEMP and
+  listening on 127.0.0.1 alone, each on a port the kernel picked. `start` puts
+  PostgreSQL 16's binaries on the job's PATH, installs redis-server, and hands
+  back both URLs as outputs; `stop`, in a step under `always()`, takes both down
+  and deletes their data. README's "Where it runs" has why it is this shape.
 
 inputs:
   command:
@@ -25,6 +24,23 @@ outputs:
 runs:
   using: composite
   steps:
+    # GitHub's ubuntu-24.04 image ships PostgreSQL 16 under
+    # /usr/lib/postgresql/16/bin with its service disabled, and no Redis
+    # (actions/runner-images, images/ubuntu/Ubuntu2404-Readme.md, image
+    # 20261101.360.1). The bin directory goes on GITHUB_PATH, so every later
+    # step's pg_dump is the server's own major. Redis comes from Ubuntu's
+    # archive, which carries 7 for 24.04, with its unit masked first so the
+    # package starts no server of its own. An image that moves either to
+    # another major is refused by name in the start below.
+    - if: inputs.command == 'start'
+      shell: bash
+      run: |
+        set -euo pipefail
+        echo /usr/lib/postgresql/16/bin >> "$GITHUB_PATH"
+        sudo systemctl mask redis-server.service
+        sudo apt-get update -qq
+        sudo apt-get install -qq -y --no-install-recommends redis-server
+
     - id: services
       shell: bash
       env:
