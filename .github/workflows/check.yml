@@ -445,6 +445,14 @@ jobs:
 
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
 
+      # Node 24 rather than the image's default 22, which cannot parse
+      # `await using`: a suite that runs Playwright under node loads modules
+      # written with it. 24 is in the image's tool cache, so nothing is
+      # downloaded (actions/runner-images, images/ubuntu/Ubuntu2404-Readme.md).
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+
       # The declarative gates read the tree as committed, so they run before the
       # install: a repo that has drifted out of the contract says so in seconds
       # rather than after a full dependency resolution.
@@ -551,6 +559,11 @@ jobs:
           persist-credentials: false
 
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+
+      # Node 24, for the reason the static job gives.
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
 
       - uses: zerefukun/dev-config/.github/actions/install@40a5c2d47d007b7eb77c27c15812efbe5719aec3 # v0.75.0
         with:

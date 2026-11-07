@@ -1501,15 +1501,16 @@ read against the new image's README in actions/runner-images.
 actions/runner-images' `images/ubuntu/Ubuntu2404-Readme.md` (image
 20261101.360.1):
 
-| Needed by                                 | What                                                      | Where it comes from                                                                                             |
-| ----------------------------------------- | --------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------- |
-| `services`, the replay and backfill gates | PostgreSQL 16's `initdb`, `pg_ctl`, `postgres`, `pg_dump` | the image, under `/usr/lib/postgresql/16/bin`, service disabled; `services` puts the directory on `GITHUB_PATH` |
-| `services`                                | `redis-server` 7                                          | `services` installs Ubuntu's package with apt, its unit masked first                                            |
-| `test-suite`, this repo's suite           | the `ci-seal` helper at `/usr/local/sbin/ci-seal`         | `test-suite` installs `ci-seal.sh` from beside it; this repo's `ci.yml` the same                                |
-| `test-suite`                              | passwordless sudo, `unshare`, `setpriv`, `ip`             | the image                                                                                                       |
-| this repo's `bun install` (`re2`)         | `g++`, `make`, `python3`, Node 22's headers               | the image                                                                                                       |
-| this repo's browser suites                | Playwright's headless chromium and its libraries          | `ci.yml`, with `playwright install --with-deps`                                                                 |
-| `build`                                   | the build tool's cache                                    | GitHub's Actions cache, through `actions/cache`                                                                 |
+| Needed by                                 | What                                                                  | Where it comes from                                                                                             |
+| ----------------------------------------- | --------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------- |
+| `services`, the replay and backfill gates | PostgreSQL 16's `initdb`, `pg_ctl`, `postgres`, `pg_dump`             | the image, under `/usr/lib/postgresql/16/bin`, service disabled; `services` puts the directory on `GITHUB_PATH` |
+| `services`                                | `redis-server` 7                                                      | `services` installs Ubuntu's package with apt, its unit masked first                                            |
+| `test-suite`, this repo's suite           | the `ci-seal` helper at `/usr/local/sbin/ci-seal`                     | `test-suite` installs `ci-seal.sh` from beside it; this repo's `ci.yml` the same                                |
+| `test-suite`                              | passwordless sudo, `unshare`, `setpriv`, `ip`                         | the image                                                                                                       |
+| every job, Playwright under node          | Node 24, which parses `await using` (the image's default 22 does not) | `actions/setup-node`, from the image's tool cache                                                               |
+| this repo's `bun install` (`re2`)         | `g++`, `make`, `python3`, Node 24's headers                           | the image                                                                                                       |
+| this repo's browser suites                | Playwright's headless chromium and its libraries                      | `ci.yml`, with `playwright install --with-deps`                                                                 |
+| `build`                                   | the build tool's cache                                                | GitHub's Actions cache, through `actions/cache`                                                                 |
 
 The `services` action refuses a Postgres that is not 16 and a Redis that is not
 7 by name: an image carrying another major would grade every repo against a
