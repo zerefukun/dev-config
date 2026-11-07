@@ -441,7 +441,7 @@ jobs:
           fi
           exit "$wrong"
 
-      - uses: zerefukun/dev-config/.github/actions/secret-scan@40a5c2d47d007b7eb77c27c15812efbe5719aec3 # v0.75.0
+      - uses: zerefukun/dev-config/.github/actions/secret-scan@638ea102574f2953f0bfe5ff53e78037f280f5bf # v0.76.0
 
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
 
@@ -456,32 +456,32 @@ jobs:
       # The declarative gates read the tree as committed, so they run before the
       # install: a repo that has drifted out of the contract says so in seconds
       # rather than after a full dependency resolution.
-      - uses: zerefukun/dev-config/.github/actions/repo-contract@40a5c2d47d007b7eb77c27c15812efbe5719aec3 # v0.75.0
+      - uses: zerefukun/dev-config/.github/actions/repo-contract@638ea102574f2953f0bfe5ff53e78037f280f5bf # v0.76.0
         with:
           database: ${{ inputs.database }}
           exemptions: ${{ inputs.contract-exemptions }}
           data-jobs-external: ${{ inputs['data-jobs-external'] }}
 
-      - uses: zerefukun/dev-config/.github/actions/stack-gate@40a5c2d47d007b7eb77c27c15812efbe5719aec3 # v0.75.0
+      - uses: zerefukun/dev-config/.github/actions/stack-gate@638ea102574f2953f0bfe5ff53e78037f280f5bf # v0.76.0
         with:
           stack-allowlist: ${{ inputs.stack-allowlist }}
 
       # The caller's own workflows were schema-checked and pin-checked by
       # nothing until this ran here. Needs the Bun that setup-bun installed.
-      - uses: zerefukun/dev-config/.github/actions/lint-workflows@40a5c2d47d007b7eb77c27c15812efbe5719aec3 # v0.75.0
+      - uses: zerefukun/dev-config/.github/actions/lint-workflows@638ea102574f2953f0bfe5ff53e78037f280f5bf # v0.76.0
 
-      - uses: zerefukun/dev-config/.github/actions/suppression-hygiene@40a5c2d47d007b7eb77c27c15812efbe5719aec3 # v0.75.0
+      - uses: zerefukun/dev-config/.github/actions/suppression-hygiene@638ea102574f2953f0bfe5ff53e78037f280f5bf # v0.76.0
 
       - if: inputs['duplicate-code']
-        uses: zerefukun/dev-config/.github/actions/duplicate-code@40a5c2d47d007b7eb77c27c15812efbe5719aec3 # v0.75.0
+        uses: zerefukun/dev-config/.github/actions/duplicate-code@638ea102574f2953f0bfe5ff53e78037f280f5bf # v0.76.0
 
       # docs/gates/shell-scripts.md — nothing else here reads a repo's own shell.
-      - uses: zerefukun/dev-config/.github/actions/shell-scripts@40a5c2d47d007b7eb77c27c15812efbe5719aec3 # v0.75.0
+      - uses: zerefukun/dev-config/.github/actions/shell-scripts@638ea102574f2953f0bfe5ff53e78037f280f5bf # v0.76.0
 
       - if: inputs.compose
-        uses: zerefukun/dev-config/.github/actions/compose-lint@40a5c2d47d007b7eb77c27c15812efbe5719aec3 # v0.75.0
+        uses: zerefukun/dev-config/.github/actions/compose-lint@638ea102574f2953f0bfe5ff53e78037f280f5bf # v0.76.0
 
-      - uses: zerefukun/dev-config/.github/actions/install@40a5c2d47d007b7eb77c27c15812efbe5719aec3 # v0.75.0
+      - uses: zerefukun/dev-config/.github/actions/install@638ea102574f2953f0bfe5ff53e78037f280f5bf # v0.76.0
         with:
           git-ssh-key: ${{ secrets['git-ssh-key'] }}
 
@@ -491,7 +491,7 @@ jobs:
       # packages alone leaves lint, knip and the root typecheck reading files
       # nothing wrote this run.
       - if: inputs.build
-        uses: zerefukun/dev-config/.github/actions/build@40a5c2d47d007b7eb77c27c15812efbe5719aec3 # v0.75.0
+        uses: zerefukun/dev-config/.github/actions/build@638ea102574f2953f0bfe5ff53e78037f280f5bf # v0.76.0
         with:
           cache: ${{ inputs['build-cache'] }}
 
@@ -512,7 +512,7 @@ jobs:
           bun run typecheck ${TURBO_AFFECTED:-}
       - run: bun run knip
 
-      - uses: zerefukun/dev-config/.github/actions/test-suite@40a5c2d47d007b7eb77c27c15812efbe5719aec3 # v0.75.0
+      - uses: zerefukun/dev-config/.github/actions/test-suite@638ea102574f2953f0bfe5ff53e78037f280f5bf # v0.76.0
         with:
           nightly: ${{ inputs.nightly }}
           test-network: ${{ inputs['test-network'] }}
@@ -532,7 +532,7 @@ jobs:
       # every step before it down with it.
       - if: inputs['mutation-lane']
         timeout-minutes: 10
-        uses: zerefukun/dev-config/.github/actions/mutation-lane@40a5c2d47d007b7eb77c27c15812efbe5719aec3 # v0.75.0
+        uses: zerefukun/dev-config/.github/actions/mutation-lane@638ea102574f2953f0bfe5ff53e78037f280f5bf # v0.76.0
         with:
           mutation-floor: ${{ inputs['mutation-floor'] }}
 
@@ -565,12 +565,12 @@ jobs:
         with:
           node-version: 24
 
-      - uses: zerefukun/dev-config/.github/actions/install@40a5c2d47d007b7eb77c27c15812efbe5719aec3 # v0.75.0
+      - uses: zerefukun/dev-config/.github/actions/install@638ea102574f2953f0bfe5ff53e78037f280f5bf # v0.76.0
         with:
           git-ssh-key: ${{ secrets['git-ssh-key'] }}
 
       - if: inputs.build
-        uses: zerefukun/dev-config/.github/actions/build@40a5c2d47d007b7eb77c27c15812efbe5719aec3 # v0.75.0
+        uses: zerefukun/dev-config/.github/actions/build@638ea102574f2953f0bfe5ff53e78037f280f5bf # v0.76.0
         with:
           cache: ${{ inputs['build-cache'] }}
 
@@ -581,7 +581,7 @@ jobs:
       # reaches them and nothing else the job starts collides with them;
       # README's "Where it runs" has the rest.
       - id: services
-        uses: zerefukun/dev-config/.github/actions/services@40a5c2d47d007b7eb77c27c15812efbe5719aec3 # v0.75.0
+        uses: zerefukun/dev-config/.github/actions/services@638ea102574f2953f0bfe5ff53e78037f280f5bf # v0.76.0
         with:
           command: start
 
@@ -609,7 +609,7 @@ jobs:
                   console.log(`PORT=${s.port}`); s.stop(true);' >> "$GITHUB_ENV"
           printf 'DATABASE_URL=%s\nREDIS_URL=%s\n' "$DATABASE_URL" "$REDIS_URL" >> "$GITHUB_ENV"
 
-      - uses: zerefukun/dev-config/.github/actions/db-gate@40a5c2d47d007b7eb77c27c15812efbe5719aec3 # v0.75.0
+      - uses: zerefukun/dev-config/.github/actions/db-gate@638ea102574f2953f0bfe5ff53e78037f280f5bf # v0.76.0
         with:
           upgrade-gate: ${{ inputs.upgrade-gate }}
           semantic-fixtures: ${{ inputs['semantic-fixtures'] }}
@@ -640,6 +640,6 @@ jobs:
       # Under always(), so a gate that failed still leaves nothing running and
       # nothing on the runner's disk.
       - if: always()
-        uses: zerefukun/dev-config/.github/actions/services@40a5c2d47d007b7eb77c27c15812efbe5719aec3 # v0.75.0
+        uses: zerefukun/dev-config/.github/actions/services@638ea102574f2953f0bfe5ff53e78037f280f5bf # v0.76.0
         with:
           command: stop
