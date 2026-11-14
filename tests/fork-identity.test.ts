@@ -40,6 +40,11 @@ const ALLOWED: readonly { file: string; line: string; reason: string }[] = [
     reason: NFP_STOREFRONT_PROBE,
   },
   {
+    file: "README.md",
+    line: "The `zerefukun/dev-config` and `gokayo43/dev-config-db` pins move in a",
+    reason: DEV_CONFIG_DB,
+  },
+  {
     file: "default.json",
     line: '"matchPackageNames": ["zerefukun/dev-config", "gokayo43/dev-config-db"],',
     reason: DEV_CONFIG_DB,
