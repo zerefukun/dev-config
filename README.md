@@ -89,13 +89,13 @@ stops TypeScript loading every `@types` package by default, so the list names
 each one the repo uses:
 
 ```jsonc
-"types": ["bun", "@gokayo43/dev-config/bun-test", "@gokayo43/dev-config/css-custom-properties"]
+"types": ["bun", "@zerefukun/dev-config/bun-test", "@zerefukun/dev-config/css-custom-properties"]
 ```
 
 and `narrowing` is one import:
 
 ```ts
-import { must, nth, only, rejectionOf } from "@gokayo43/dev-config/narrowing";
+import { must, nth, only, rejectionOf } from "@zerefukun/dev-config/narrowing";
 ```
 
 Gate code is deliberately **not** importable by the repos it gates — a gate in
@@ -1362,7 +1362,7 @@ release declares the tsgolint range it runs, bun installs a pair outside that
 range without a warning, and the repo contract refuses such a pair in
 `bun.lock`.
 
-The `gokayo43/dev-config` and `gokayo43/dev-config-db` pins move in a
+The `zerefukun/dev-config` and `gokayo43/dev-config-db` pins move in a
 "dev-config" PR of their own, never in the week's group: the branch
 `renovate/dev-config` for every move but a major, which gets a branch of its
 own. Neither merges itself: a pin carries gate code, and moving it is that

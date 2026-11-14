@@ -13,7 +13,7 @@ import { materialise, type Tree } from "./tree.ts";
  * strictness, and the reading of a reason is graded where `.oxlintrc.json` is.
  */
 describe("a check of the base a tsconfig sets back", () => {
-  const BASE = "@gokayo43/dev-config/tsconfig.base.json";
+  const BASE = "@zerefukun/dev-config/tsconfig.base.json";
 
   /** A tsconfig extending the base, with `body` as its `compilerOptions`, one line per entry. */
   function tsconfig(body: string): string {

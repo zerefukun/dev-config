@@ -1,13 +1,13 @@
 # Awaitable `.resolves` and `.rejects`
 
-`@gokayo43/dev-config/bun-test` is a type declaration that types every matcher
+`@zerefukun/dev-config/bun-test` is a type declaration that types every matcher
 reached through `.resolves` or `.rejects` as returning `Promise<void>`. A repo
 names it in its own `tsconfig.json`, beside `bun`:
 
 ```jsonc
 {
   "compilerOptions": {
-    "types": ["bun", "@gokayo43/dev-config/bun-test"],
+    "types": ["bun", "@zerefukun/dev-config/bun-test"],
   },
 }
 ```

@@ -1,13 +1,13 @@
 # CSS custom properties in `style`
 
-`@gokayo43/dev-config/css-custom-properties` is a type declaration that makes
+`@zerefukun/dev-config/css-custom-properties` is a type declaration that makes
 any `--name` a legal key of React's `CSSProperties`. A repo names it in its own
 `tsconfig.json`, beside what it already lists:
 
 ```jsonc
 {
   "compilerOptions": {
-    "types": ["bun", "@gokayo43/dev-config/css-custom-properties"],
+    "types": ["bun", "@zerefukun/dev-config/css-custom-properties"],
   },
 }
 ```

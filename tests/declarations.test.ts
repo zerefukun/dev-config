@@ -8,7 +8,7 @@ import { materialise, type Tree } from "./tree.ts";
 
 /**
  * The two declaration files, each graded in a consumer's shape: the package
- * installed as `@gokayo43/dev-config` with only the files a declaration reaches,
+ * installed as `@zerefukun/dev-config` with only the files a declaration reaches,
  * this repo's own install beside it for `@types/bun`, `@types/react` and
  * `oxlint-tsgolint`, and the declaration named in the consumer's own `types` by
  * its export, which is the one line README tells a repo to write. The
@@ -22,8 +22,8 @@ setDefaultTimeout(60_000);
 
 const REPO = dirname(import.meta.dir);
 const SHIPPED = ["package.json", "bun-test.d.ts", "css-custom-properties.d.ts"];
-const BUN_TEST = "@gokayo43/dev-config/bun-test";
-const CSS = "@gokayo43/dev-config/css-custom-properties";
+const BUN_TEST = "@zerefukun/dev-config/bun-test";
+const CSS = "@zerefukun/dev-config/css-custom-properties";
 
 /** A consumer's program over `tree`, with `types` as its own `compilerOptions.types`. */
 async function installed(
@@ -48,12 +48,12 @@ async function installed(
     ...tree,
   });
   const modules = join(root, "node_modules");
-  await mkdir(join(modules, "@gokayo43", "dev-config"), { recursive: true });
+  await mkdir(join(modules, "@zerefukun", "dev-config"), { recursive: true });
   for (const name of await readdir(join(REPO, "node_modules"))) {
     await symlink(join(REPO, "node_modules", name), join(modules, name));
   }
   for (const name of SHIPPED) {
-    await symlink(join(REPO, name), join(modules, "@gokayo43", "dev-config", name));
+    await symlink(join(REPO, name), join(modules, "@zerefukun", "dev-config", name));
   }
   return root;
 }
