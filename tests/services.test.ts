@@ -120,8 +120,8 @@ function held(): Disposable & { readonly port: number } {
 }
 
 // The wrong implementations: a server left on its default listen address
-// (Postgres's `localhost`, Redis's every interface), which answers off the box;
-// a fixed port, which two overlapping jobs collide on; and URLs that name
+// (Postgres's `localhost`, Redis's every interface), which answers off the
+// machine; a fixed port, which two checkouts on one machine collide on; and URLs that name
 // something other than what was started.
 describe("start", () => {
   test(
@@ -146,7 +146,7 @@ describe("start", () => {
   );
 
   test(
-    "gives two jobs on one box two pairs of ports",
+    "gives two checkouts on one machine two pairs of ports",
     async () => {
       await using first = await scratch();
       await using second = await scratch();
@@ -298,6 +298,13 @@ describe("stop", () => {
     await using run = await scratch();
     await mkdir(join(run.root, "postgres"), { recursive: true });
     await using bystander = Bun.spawn(["sleep", "30"]);
+    // The spawn returns before the child has exec'd, and until it has, its
+    // /proc entry still names the parent's program rather than sleep.
+    for (let attempt = 0; attempt < 200 && !runs(bystander.pid, "sleep"); attempt += 1) {
+      // oxlint-disable-next-line anti-slop/no-real-timers -- the wait is for a real process's exec, which no virtual clock advances
+      await Bun.sleep(5);
+    }
+    expect(runs(bystander.pid, "sleep")).toBe(true);
     await Bun.write(join(run.root, "postgres", "postmaster.pid"), `${bystander.pid}\n`);
     await Bun.write(join(run.root, "redis.pid"), `${bystander.pid}\n`);
     await stop(run.root);

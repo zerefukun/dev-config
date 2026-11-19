@@ -253,9 +253,8 @@ describe("what a caller may pass, and what the jobs do with it", () => {
   });
 
   // The boot gate's app gets a port picked by the kernel: 3000 is the framework
-  // default, so it is exactly the port a shared box has already given to
-  // something else — on this one, to a deployed API — and two of these jobs
-  // would collide on it as surely as on any fixed port. The wrong
+  // default, so it is exactly the port something else in the job, or on a
+  // developer's machine running the gate by hand, may already hold. The wrong
   // implementation is the one that shipped: a health-url default that still
   // says 3000. Read through `format(...)` rather than by
   // searching for the absence of "3000", since a case that only asserted the

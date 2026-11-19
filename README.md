@@ -1206,10 +1206,9 @@ lanes, which is why they run first.
 The replay suite needs a real Postgres, since what it asserts is what two
 databases end up holding. It creates and **drops** databases on whatever it is
 pointed at, so `TEST_DATABASE_URL` is required and the suite refuses to guess —
-`tests/postgres.ts` is its one reader. There used to be a `localhost:5432`
-default, on the argument that a suite naming its own databases costs a stranger
-nothing; that stopped being true when `localhost` became a box running the
-fleet's stacks and its CI runners.
+`tests/postgres.ts` is its one reader. A default would point it at whatever
+answers on `localhost`, which on a machine running the fleet's stacks is a
+Postgres holding their data.
 
 Two runs may share one server: every name either the suite or a gate puts on it
 carries what tells the runs apart — the process for the suite's own databases,
@@ -1240,11 +1239,11 @@ bun .github/actions/services/services.main.ts stop "$root" /dev/null
 ```
 
 Both listen on `127.0.0.1` alone, each on a port the kernel picked, so nothing
-off the box reaches them and the two pairs never collide.
+off the machine reaches them and the two pairs never collide.
 
 The preset suite runs Renovate's validator with the `re2` addon, which `bun
 install` builds from source, so a machine running it carries `g++`, `make`,
-`python3` and its Node's headers, as "Where it runs" lists for the runner.
+`python3` and its Node's headers, as "Where it runs" lists for the hosted image.
 
 The invariant sweep's suite and the count budget's browser suite drive a real
 browser against a real server, because what those fixtures claim is a browser
@@ -1256,12 +1255,14 @@ with:
 ./node_modules/.bin/playwright install chromium-headless-shell
 ```
 
-No `--with-deps`: it shells out to `sudo apt-get`, which the CI runner's account
-may not run, and the shared libraries it installs are already on the box.
+A machine missing the browser's shared libraries adds `--with-deps`, which
+installs them through `sudo apt-get`, as CI does.
 
-The test-suite gate's own suite needs the `ci-seal` helper and its sudoers line
-("Where it runs"), which is what taking a network namespace costs — a runner
-has them, and a machine that does not cannot run the sealed cases honestly. The
+The test-suite gate's own suite runs `.github/actions/test-suite/ci-seal.sh`
+from the checkout through `sudo --non-interactive`, which is what taking a
+network namespace costs. A machine whose sudo asks for a password runs
+`sudo -v` in the same terminal first; one with no sudo cannot run the sealed
+cases honestly. The
 cases about the call itself (what the step hands the helper) put a stand-in
 `sudo` on `PATH` and run anywhere. It is the one gate here whose subject is not
 a module, so its cases extract the step out of the shipped `action.yml` and
@@ -1288,14 +1289,13 @@ tag is a name its owner can repoint at any commit, including after the version
 was read here. Only a local `./…` reference is skipped, because it is this
 repo's own tree at this commit and has no ref to pin.
 
-The same step refuses everything that needs a container runtime: a job's
-`container:` in either spelling, each of its `services:`, a `docker://` step,
-and an action whose `runs.using` is `docker`. No runner in this fleet has a
-runtime to give them, so the refusal names the line here rather than leaving
-the job to fail on the runner; a server a job needs comes from the runner's own
-binaries, the way the `services` action starts Postgres and Redis ("Where it
-runs"). An action reached as `owner/repo@sha` that is itself a Docker action is
-beyond what a read of this repository can see.
+The same step refuses everything that runs a container: a job's `container:`
+in either spelling, each of its `services:`, a `docker://` step, and an action
+whose `runs.using` is `docker`. A server a job needs comes one way, through the
+`services` action, which holds its major, binds `127.0.0.1` on a port the kernel
+picked and pulls no image ("Where it runs"). An action reached as
+`owner/repo@sha` that is itself a Docker action is beyond what a read of this
+repository can see.
 
 There is no standalone `renovate-config-validator` package on npm; the binary
 ships inside `renovate`, which this repo pins as a devDependency so the run
@@ -1476,97 +1476,88 @@ hook with it reports nothing and looks exactly like a broken hook.
 ## CI
 
 The gate is a workflow in this repo — `.github/workflows/check.yml` — and repos
-call it instead of retyping it. A consuming repo's `.github/workflows/ci.yml` is
-the whole of its CI:
+call it instead of retyping it.
 
 ### Where it runs
 
-Every job in `check.yml` and in this repo's own `ci.yml` declares
-`runs-on: [self-hosted, linux]`. **A caller needs a runner carrying both labels,
-or its jobs queue until one appears** — there is no timeout on a queued job, so
-the symptom is a run that never starts rather than one that fails. dev-config#88
-is where the move is argued.
+Every job in `check.yml`, in `nightly-issue.yml` and in this repo's own `ci.yml`
+declares `runs-on: ubuntu-24.04`: GitHub's hosted runner, a fresh virtual
+machine per job that is discarded when the job ends. A caller provides no
+machine. The label is pinned rather than `ubuntu-latest`, which GitHub moves to
+a new Ubuntu release on its own schedule (the move to 26.04 is announced for
+November 2026), because the image is part of what the gates grade: its
+PostgreSQL major, its Node, its kernel. The label moves in a release of this
+repo of its own, with the `services` action's major checks and this section
+read against the new image's README in actions/runner-images.
 
-**The runner provides no container runtime, and needs none.** The database
-job's Postgres and Redis are the runner's own binaries, started by the
-`services` action, so a runner carrying the labels also carries:
+**What the image provides, and what the actions install.** Read off
+actions/runner-images' `images/ubuntu/Ubuntu2404-Readme.md` (image
+20261101.360.1):
 
-- PostgreSQL 16's `initdb`, `pg_ctl`, `postgres` and `pg_dump` on the job's
-  `PATH` (Debian's packages put them in `/usr/lib/postgresql/16/bin`, which the
-  runner adds to `PATH` itself — one place decides where every step finds
-  them);
-- `redis-server` 7 on the job's `PATH`;
-- no system instance of either holding a port it would want, an account that
-  is not root, since `initdb` refuses one, and Linux's `/proc`, which `stop`
-  reads to make sure a pid is still the server it was written for.
+| Needed by                                 | What                                                                  | Where it comes from                                                                                             |
+| ----------------------------------------- | --------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------- |
+| `services`, the replay and backfill gates | PostgreSQL 16's `initdb`, `pg_ctl`, `postgres`, `pg_dump`             | the image, under `/usr/lib/postgresql/16/bin`, service disabled; `services` puts the directory on `GITHUB_PATH` |
+| `services`                                | `redis-server` 7                                                      | `services` installs Ubuntu's package with apt, its unit masked first                                            |
+| `test-suite`, this repo's suite           | the `ci-seal` helper                                                  | `ci-seal.sh` beside the action, run in place                                                                    |
+| `test-suite`                              | passwordless sudo, `unshare`, `setpriv`, `ip`                         | the image                                                                                                       |
+| every job, Playwright under node          | Node 24, which parses `await using` (the image's default 22 does not) | `actions/setup-node`, from the image's tool cache                                                               |
+| this repo's `bun install` (`re2`)         | `g++`, `make`, `python3`, Node 24's headers                           | the image                                                                                                       |
+| this repo's browser suites                | Playwright's headless chromium and its libraries                      | `ci.yml`, with `playwright install --with-deps`                                                                 |
+| `build`                                   | the build tool's cache                                                | GitHub's Actions cache, through `actions/cache`                                                                 |
 
-This repo's own CI needs two things more. Its `bun install` builds the `re2`
-addon Renovate's validator grades regexes with, so the runner carries a C++
-toolchain (`g++`, `make`, `python3`) and the headers of its own Node under the
-Node's prefix (`include/node`, which the official tarball and NodeSource's
-package ship; Debian's `nodejs` needs `libnode-dev` and `libuv1-dev`). And its
-browser suites run Playwright's headless chromium, whose shared libraries the
-runner provides, since nothing here runs `--with-deps`.
+The `services` action refuses a Postgres that is not 16 and a Redis that is not
+7 by name: an image carrying another major would grade every repo against a
+server its production does not run, and say nothing.
 
-The action refuses a Postgres that is not 16 and a Redis that is not 7 by
-name: a runner carrying another major would grade every repo against a server
-its production does not run.
+**The suite is sealed through the `ci-seal` helper.** It lives beside the
+test-suite action as `ci-seal.sh`, and the run step calls it there through
+sudo. It takes `--path P --tmpdir T -- CMD [ARGS…]` and runs `CMD` as the user
+that invoked it, in that user's primary group and no supplementary one, in a
+fresh network namespace with only `lo` up, with exactly that `PATH` and
+`TMPDIR`, and passes a termination signal on to it, since the step cancels the
+suite by signalling the helper. The job owns the machine and its account has passwordless sudo, so
+the helper is not a privilege boundary: what it does is isolate the suite from
+the network, and give up root again before the suite runs, so nothing the
+suite writes lands root-owned in the workspace. docs/gates/test-suite.md has
+the step's side of the call.
 
-**The static job seals the suite through the runner's `ci-seal` helper**, so
-every runner carries it, and grants nothing wider:
-
-- `/usr/local/sbin/ci-seal`, owned by root and writable by nobody else, taking
-  `--path P --tmpdir T -- CMD [ARGS…]`. It runs `CMD` as the user that invoked
-  it, in a fresh network namespace with only `lo` up, with exactly that `PATH`
-  and `TMPDIR`, and passes a termination signal on to it, since the step
-  cancels the suite by signalling the helper.
-- One sudoers line, and no other: the runner's account may run that path
-  without a password — for example
-  `ci ALL=(root) NOPASSWD: /usr/local/sbin/ci-seal`. A grant of `unshare`
-  would hand root to whatever a pull request's suite runs; this one hands it a
-  namespace.
-- A `TMPDIR` in the runner's environment that names an exec-able directory the
-  runner's account owns, wherever `/tmp` is `noexec`: suites build fixtures
-  there and run them, and the step hands it into the seal.
-
-docs/gates/test-suite.md has the step's side of the call.
-
-Five things follow from the runner being a shared, persistent machine rather
-than a fresh cloud VM, and they are why the workflows look the way they do:
+The rest of the shape holds on a machine the job has to itself:
 
 - **The servers listen on `127.0.0.1` alone, on ports the kernel picked**,
   never on a fixed one. Postgres's default `localhost` and Redis's default of
-  every interface would answer from off the box, and a fixed port is
-  single-occupancy where two runners' jobs overlapping is the ordinary case.
-  The action binds port 0, reads the assignment back and hands it to the
-  server; another process taking the port in between is a race the server's
-  own refusal reports, and the action answers it with a fresh port, five times
-  before it fails. The URLs are the action's outputs,
+  every interface would answer from off the machine, and a fixed port is
+  whatever else is already listening: a server a suite or the app's start
+  command brings up in the same job, or, since the action and this repo's
+  suite also run on developers' machines ("Gating this repo"), their own
+  Postgres on 5432. The action binds port 0, reads the assignment back and
+  hands it to the server; another process taking the port in between is a race
+  the server's own refusal reports, and the action answers it with a fresh
+  port, five times before it fails. The URLs are the action's outputs,
   `${{ steps.services.outputs.database-url }}` and `redis-url`.
 - **The boot gate's app gets an allocated port too.** `health-url` defaults to
   `http://localhost:${PORT}/api/health`, where `PORT` is a free port the job
-  bound and exported before the gate runs. 3000 is the framework default and
-  therefore the port something else on a shared box already holds. `PORT` is the
+  bound and exported before the gate runs, for the same reason. `PORT` is the
   platform convention; an app that ignores it needs `start-command` and
   `health-url` set explicitly.
-- **The workspace is not discarded when the run ends.** What cleans it is
-  `actions/checkout` at the start of the next run.
-- **The servers' data lives under `RUNNER_TEMP` and dies with the job.** The
+- **The servers' data lives under `RUNNER_TEMP`**, the directory the runner
+  gives the job for its own files, outside the workspace the gates read. The
   `services` action's `stop`, the job's last step under `if: always()`, takes
-  both servers down and deletes their directory, so a job that failed leaves
-  nothing running and nothing on the disk; a job that failed before `start`
-  ran has nothing to stop, and the step is nothing at all. Durability is off
-  (`fsync`, `full_page_writes`, `synchronous_commit`), since nothing there
-  outlives the job.
-- **A build cache lives on the runner's own disk.** The `build` action keeps
-  the paths `build-cache` names in the runner's tool cache (`RUNNER_TOOL_CACHE`),
-  one store per runner, so a runner's first run builds cold and the runs after
-  it build warm, and two runners each warm their own. A store that is missing
-  or cannot be read is a cold build with a warning, never a failure.
+  both servers down and deletes their directory, so the job ends with nothing
+  of its own running rather than leaving the runner to reap two daemons as
+  orphans; a job that failed before `start` ran has nothing to stop, and the
+  step is nothing at all. Durability is off (`fsync`, `full_page_writes`,
+  `synchronous_commit`), since nothing there outlives the job.
+- **The build cache lives in GitHub's Actions cache.** The `build` action
+  restores the paths `build-cache` names before the build and saves them after
+  one that passed, keyed on `bun.lock` with a suffix unique to each save, and
+  restores the newest save under the lockfile's key; GitHub never overwrites an
+  entry and evicts the least recently used past the repository's quota. A
+  cache that cannot be read or written is a cold build with a warning, never a
+  failure.
 
-The Lighthouse example under "Static sites" deliberately stays on
-`ubuntu-latest`: its numbers are the assertion, and a box that is also serving
-production moves them for reasons no commit caused.
+### Calling it
+
+A consuming repo's `.github/workflows/ci.yml` is the whole of its CI:
 
 ```yaml
 name: CI
@@ -1599,37 +1590,37 @@ a caller who did not, and where a real default exists it is applied further down
 here at all: the boot gate's health URL carries a port the job allocates while
 it runs. Effect says which, per input.
 
-| Input                 | Declared | Effect                                                                                                                                                                                                                                                                                                                                                                                                                                    |
-| --------------------- | -------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `build`               | `false`  | Runs `bun run build` before the static gate and before the boot gate.                                                                                                                                                                                                                                                                                                                                                                     |
-| `build-cache`         | `""`     | Paths the build tool caches in, one per line, relative to the repository root, such as `.next/cache` for Next. Restored from the runner's tool cache before the build and saved after one that passed, keyed on `bun.lock`, one key per repository per runner. A store failure warns and builds cold. Refused: an absolute path, a `..` segment, the root itself, a path named twice or inside another, no `bun.lock`, no `build: true`.  |
-| `nightly`             | `false`  | The run nobody is waiting on: property tests get fifty times the runs they ask for with a two-minute limit on each, the fuzzer gets ten minutes instead of twenty seconds, and both jobs get a timeout that fits. The caller supplies the schedule, and a second job of its own files what a red one leaves behind — [The nightly run](#the-nightly-run).                                                                                 |
-| `affected`            | `false`  | Runs the `typecheck` lane over the packages a pull request changed, via turbo's `--affected` with `TURBO_SCM_BASE` set to the pull request's base commit. Needs `turbo.json` at the root and is refused without one; ignored on a push, where `main` stays the full run.                                                                                                                                                                  |
-| `database`            | `none`   | `postgres` adds the database job: an empty Postgres, the migrations replayed onto it twice, the app booted against the result, and a k6 ramp over every route it serves. `external` says a workflow wrapping this one runs the database gates in that job's place. `none` is a repo with no schema. Anything but `none` makes `db:migrate` part of the repo contract; anything outside the three is refused.                              |
-| `compose`             | `false`  | Holds `docker-compose.yml` to the deployment shape.                                                                                                                                                                                                                                                                                                                                                                                       |
-| `mutation-lane`       | `false`  | Mutates the domain files this branch changed and fails on a mutant its own lines left undetected, on a run whose suite was already failing unmutated, or on one that graded only part of what it mutated. Reads the pure domain from the `boundaries/elements` entry typed `domain`; needs `@stryker-mutator/core` and `@hughescr/stryker-bun-runner` among the repo's devDependencies.                                                   |
-| `mutation-floor`      | `""`     | The mutation score the changed domain files must hold, as a fraction between 0 and 1. Empty publishes the score and enforces nothing. Needs `mutation-lane: true`.                                                                                                                                                                                                                                                                        |
-| `duplicate-code`      | `false`  | Fails on a run of twelve or more lines, comments and whitespace aside, that this branch wrote and that also appears elsewhere in the repo's source. Kept by `// duplicate-code-allow -- <reason>` on the clone's first line or the line above; a file `.gitattributes` marks `linguist-generated` is not read. Needs the base ref, which `fetch-depth: 0` gives it.                                                                       |
-| `upgrade-gate`        | `false`  | Also proves that a database upgraded from the base ref's migrations reaches the schema a fresh one gets. Needs `database: postgres`; for repos whose database is deployed.                                                                                                                                                                                                                                                                |
-| `semantic-fixtures`   | `""`     | A directory of the repo's own holding the rows a deployed database already has, as base-compatible SQL, each with the assertion the current contract makes about them: written into the base ref's replay and graded after this branch's migrations run over them. Needs `upgrade-gate: true`. Needs `database: postgres`.                                                                                                                |
-| `contract-exemptions` | `""`     | Repo-contract facts this repo is structurally unable to satisfy, space-separated. A marketing site names `docs-spine`; a repo being wound down names `lifecycle-retire`.                                                                                                                                                                                                                                                                  |
-| `data-jobs-external`  | `""`     | Where the deployment already runs a live repo's backup and restore drill, when they are not this repo's own scripts — the job, its schedule and the runbook. Empty asks for `scripts/backup.sh` and `scripts/restore-drill.sh` with their units. The reason is the waiver, so there is no way to claim it without naming the jobs.                                                                                                        |
-| `stack-allowlist`     | `""`     | Packages this repo keeps against the stack denylist, as `<package> -- why` entries, one per line; an entry is refused when it carries no reason, when nothing here declares the package any more, or when the denylist has stopped denying it.                                                                                                                                                                                            |
-| `backfill-seed`       | `""`     | Shell code putting a database into the state this repo's backfill was written for. Set it with `backfill-command` or not at all. Needs `database: postgres`.                                                                                                                                                                                                                                                                              |
-| `backfill-command`    | `""`     | The backfill, as shell code: run twice against the state `backfill-seed` wrote, in a database of the check's own, with the data compared either side of the second run. Needs `database: postgres`.                                                                                                                                                                                                                                       |
-| `start-command`       | `""`     | How the boot gate starts the app. Empty takes `bun run start`, applied by the database job rather than declared here, so that the guard can tell a caller who passed this from one who did not. Needs `database: postgres`.                                                                                                                                                                                                               |
-| `health-url`          | `""`     | What the boot gate polls until it answers 200. Empty takes `http://localhost:${PORT}/api/health`, applied by the database job — `PORT` is the port that job allocates, for the reason "Where it runs" above gives. Needs `database: postgres`.                                                                                                                                                                                            |
-| `probe-command`       | `""`     | A command of the repo's own, run as shell against the booted app after it answers its health route and before the ramp, with the app's URL in `HEALTH_URL`. Its stdout is the verdict: every line it writes there is one problem, whatever it exits with. Needs `database: postgres`.                                                                                                                                                     |
-| `probe-timeout`       | `""`     | How many seconds `probe-command` gets before it is killed. Empty takes the bound `db-gate/probe.ts` declares — 120 seconds today — which is where that number and the argument for it live. Needs `probe-command`. Needs `database: postgres`.                                                                                                                                                                                            |
-| `timestamp-allowlist` | `""`     | `schema.table.column -- why` entries whose value really is a wall-clock reading rather than an instant, one per line; an entry is refused when it carries no reason, when the schema has no column of that name, or when that column is no longer a wall-clock one. Needs `database: postgres`.                                                                                                                                           |
-| `capacity-path`       | `""`     | Paths to ramp alongside the health route, one per line. Needs `database: postgres`.                                                                                                                                                                                                                                                                                                                                                       |
-| `fuzz-seed`           | `""`     | The seed the route fuzzer generates from: paste the number a failing run printed to send that run again. Empty derives one from the run's id, so a re-run searches somewhere new. Needs `database: postgres`.                                                                                                                                                                                                                             |
-| `capacity-script`     | `""`     | A k6 script of the repo's own, replacing the shipped ramp. Needs `database: postgres`.                                                                                                                                                                                                                                                                                                                                                    |
-| `db-gate-evidence`    | `""`     | The artifact name for the k6 summary, the two route-log snapshots, the route table the committed snapshot must hold, the backfill check's three data dumps, the fuzzer's report and the app's output, for a matrix that runs more than one leg. Empty takes `db-gate`'s own name, which is where that default lives. Needs `database: postgres`.                                                                                          |
-| `route-allowlist`     | `""`     | Routes the ramp cannot cover, as `METHOD /path -- why` entries, one per line; one without a reason, and one the ramp did reach, are both refused. Needs `database: postgres`.                                                                                                                                                                                                                                                             |
-| `route-retire`        | `""`     | Routes this repo has deliberately stopped serving, as `METHOD /path -- why` entries matching the base ref's `routes.snapshot.json`, one per line. Graded where the `lifecycle` field says `live`, which is where the base ref's routes are held at all; an entry without a reason, one the base ref never served, one the app still serves, and the whole input on a repo that holds nothing are all refused. Needs `database: postgres`. |
-| `test-network`        | `""`     | Why this repo's suite has to reach a real network. Empty runs the suite sealed in a network namespace with nothing but loopback in it, so a live call fails where it is written. The reason is the input, and it is read in review like the reason on a lint directive.                                                                                                                                                                   |
-| `test-suite-evidence` | `""`     | The artifact name for the junit report, for a matrix that runs more than one leg. Empty takes `test-suite`'s own name, which is where that default lives.                                                                                                                                                                                                                                                                                 |
+| Input                 | Declared | Effect                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
+| --------------------- | -------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `build`               | `false`  | Runs `bun run build` before the static gate and before the boot gate.                                                                                                                                                                                                                                                                                                                                                                                                                               |
+| `build-cache`         | `""`     | Paths the build tool caches in, one per line, relative to the repository root, such as `.next/cache` for Next. Restored from GitHub's Actions cache before the build and saved after one that passed, under a new key per save; the restore takes the newest save under the lockfile's key. A store failure warns and builds cold. Refused: an absolute path, a `~` path, a glob character, a `..` segment, the root itself, a path named twice or inside another, no `bun.lock`, no `build: true`. |
+| `nightly`             | `false`  | The run nobody is waiting on: property tests get fifty times the runs they ask for with a two-minute limit on each, the fuzzer gets ten minutes instead of twenty seconds, and both jobs get a timeout that fits. The caller supplies the schedule, and a second job of its own files what a red one leaves behind — [The nightly run](#the-nightly-run).                                                                                                                                           |
+| `affected`            | `false`  | Runs the `typecheck` lane over the packages a pull request changed, via turbo's `--affected` with `TURBO_SCM_BASE` set to the pull request's base commit. Needs `turbo.json` at the root and is refused without one; ignored on a push, where `main` stays the full run.                                                                                                                                                                                                                            |
+| `database`            | `none`   | `postgres` adds the database job: an empty Postgres, the migrations replayed onto it twice, the app booted against the result, and a k6 ramp over every route it serves. `external` says a workflow wrapping this one runs the database gates in that job's place. `none` is a repo with no schema. Anything but `none` makes `db:migrate` part of the repo contract; anything outside the three is refused.                                                                                        |
+| `compose`             | `false`  | Holds `docker-compose.yml` to the deployment shape.                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
+| `mutation-lane`       | `false`  | Mutates the domain files this branch changed and fails on a mutant its own lines left undetected, on a run whose suite was already failing unmutated, or on one that graded only part of what it mutated. Reads the pure domain from the `boundaries/elements` entry typed `domain`; needs `@stryker-mutator/core` and `@hughescr/stryker-bun-runner` among the repo's devDependencies.                                                                                                             |
+| `mutation-floor`      | `""`     | The mutation score the changed domain files must hold, as a fraction between 0 and 1. Empty publishes the score and enforces nothing. Needs `mutation-lane: true`.                                                                                                                                                                                                                                                                                                                                  |
+| `duplicate-code`      | `false`  | Fails on a run of twelve or more lines, comments and whitespace aside, that this branch wrote and that also appears elsewhere in the repo's source. Kept by `// duplicate-code-allow -- <reason>` on the clone's first line or the line above; a file `.gitattributes` marks `linguist-generated` is not read. Needs the base ref, which `fetch-depth: 0` gives it.                                                                                                                                 |
+| `upgrade-gate`        | `false`  | Also proves that a database upgraded from the base ref's migrations reaches the schema a fresh one gets. Needs `database: postgres`; for repos whose database is deployed.                                                                                                                                                                                                                                                                                                                          |
+| `semantic-fixtures`   | `""`     | A directory of the repo's own holding the rows a deployed database already has, as base-compatible SQL, each with the assertion the current contract makes about them: written into the base ref's replay and graded after this branch's migrations run over them. Needs `upgrade-gate: true`. Needs `database: postgres`.                                                                                                                                                                          |
+| `contract-exemptions` | `""`     | Repo-contract facts this repo is structurally unable to satisfy, space-separated. A marketing site names `docs-spine`; a repo being wound down names `lifecycle-retire`.                                                                                                                                                                                                                                                                                                                            |
+| `data-jobs-external`  | `""`     | Where the deployment already runs a live repo's backup and restore drill, when they are not this repo's own scripts — the job, its schedule and the runbook. Empty asks for `scripts/backup.sh` and `scripts/restore-drill.sh` with their units. The reason is the waiver, so there is no way to claim it without naming the jobs.                                                                                                                                                                  |
+| `stack-allowlist`     | `""`     | Packages this repo keeps against the stack denylist, as `<package> -- why` entries, one per line; an entry is refused when it carries no reason, when nothing here declares the package any more, or when the denylist has stopped denying it.                                                                                                                                                                                                                                                      |
+| `backfill-seed`       | `""`     | Shell code putting a database into the state this repo's backfill was written for. Set it with `backfill-command` or not at all. Needs `database: postgres`.                                                                                                                                                                                                                                                                                                                                        |
+| `backfill-command`    | `""`     | The backfill, as shell code: run twice against the state `backfill-seed` wrote, in a database of the check's own, with the data compared either side of the second run. Needs `database: postgres`.                                                                                                                                                                                                                                                                                                 |
+| `start-command`       | `""`     | How the boot gate starts the app. Empty takes `bun run start`, applied by the database job rather than declared here, so that the guard can tell a caller who passed this from one who did not. Needs `database: postgres`.                                                                                                                                                                                                                                                                         |
+| `health-url`          | `""`     | What the boot gate polls until it answers 200. Empty takes `http://localhost:${PORT}/api/health`, applied by the database job — `PORT` is the port that job allocates, for the reason "Where it runs" above gives. Needs `database: postgres`.                                                                                                                                                                                                                                                      |
+| `probe-command`       | `""`     | A command of the repo's own, run as shell against the booted app after it answers its health route and before the ramp, with the app's URL in `HEALTH_URL`. Its stdout is the verdict: every line it writes there is one problem, whatever it exits with. Needs `database: postgres`.                                                                                                                                                                                                               |
+| `probe-timeout`       | `""`     | How many seconds `probe-command` gets before it is killed. Empty takes the bound `db-gate/probe.ts` declares — 120 seconds today — which is where that number and the argument for it live. Needs `probe-command`. Needs `database: postgres`.                                                                                                                                                                                                                                                      |
+| `timestamp-allowlist` | `""`     | `schema.table.column -- why` entries whose value really is a wall-clock reading rather than an instant, one per line; an entry is refused when it carries no reason, when the schema has no column of that name, or when that column is no longer a wall-clock one. Needs `database: postgres`.                                                                                                                                                                                                     |
+| `capacity-path`       | `""`     | Paths to ramp alongside the health route, one per line. Needs `database: postgres`.                                                                                                                                                                                                                                                                                                                                                                                                                 |
+| `fuzz-seed`           | `""`     | The seed the route fuzzer generates from: paste the number a failing run printed to send that run again. Empty derives one from the run's id, so a re-run searches somewhere new. Needs `database: postgres`.                                                                                                                                                                                                                                                                                       |
+| `capacity-script`     | `""`     | A k6 script of the repo's own, replacing the shipped ramp. Needs `database: postgres`.                                                                                                                                                                                                                                                                                                                                                                                                              |
+| `db-gate-evidence`    | `""`     | The artifact name for the k6 summary, the two route-log snapshots, the route table the committed snapshot must hold, the backfill check's three data dumps, the fuzzer's report and the app's output, for a matrix that runs more than one leg. Empty takes `db-gate`'s own name, which is where that default lives. Needs `database: postgres`.                                                                                                                                                    |
+| `route-allowlist`     | `""`     | Routes the ramp cannot cover, as `METHOD /path -- why` entries, one per line; one without a reason, and one the ramp did reach, are both refused. Needs `database: postgres`.                                                                                                                                                                                                                                                                                                                       |
+| `route-retire`        | `""`     | Routes this repo has deliberately stopped serving, as `METHOD /path -- why` entries matching the base ref's `routes.snapshot.json`, one per line. Graded where the `lifecycle` field says `live`, which is where the base ref's routes are held at all; an entry without a reason, one the base ref never served, one the app still serves, and the whole input on a repo that holds nothing are all refused. Needs `database: postgres`.                                                           |
+| `test-network`        | `""`     | Why this repo's suite has to reach a real network. Empty runs the suite sealed in a network namespace with nothing but loopback in it, so a live call fails where it is written. The reason is the input, and it is read in review like the reason on a lint directive.                                                                                                                                                                                                                             |
+| `test-suite-evidence` | `""`     | The artifact name for the junit report, for a matrix that runs more than one leg. Empty takes `test-suite`'s own name, which is where that default lives.                                                                                                                                                                                                                                                                                                                                           |
 
 Both evidence names default to a constant, and an artifact name may be claimed
 once per run — so a caller that runs `check.yml` as a **matrix** has to give each
@@ -1780,8 +1771,10 @@ Everything the workflow reaches for is pinned by content, not by a name someone
 else can repoint: actions and the workflow call by commit SHA, the gitleaks
 archive by SHA-256. The tag in the trailing comment is the label and the hash
 is the contract; Renovate moves both together. The one thing the workflow runs
-that it does not pin is the runner's Postgres and Redis, which are the
-runner's to install; the `services` action holds their majors instead.
+that it does not pin by content is the servers and Node the jobs run: Postgres is
+the image's, Redis is installed by the `services` action from Ubuntu's archive,
+unpinned, with the major check in `services.ts` as the guard, and Node is
+`node-version: 24` from the image's tool cache.
 
 The secret scan downloads the released binary instead of using
 `gitleaks/gitleaks-action`, which since v2 is not open source: it ships under a
@@ -1923,9 +1916,9 @@ from `https://api.github.com/meta`, fetched over TLS from the host the clone is
 about to reach; a copy pinned in this repo would outlive GitHub's next rotation
 and take every consumer's install down with it until the pin moved. The call
 carries the job's own `github.token`, because unauthenticated that endpoint
-allows **60 calls an hour per IP** — which every runner on one host shares —
-against 5,000 with a credential (measured 2026-09-11, `x-ratelimit-limit`), and
-a 403 there fails an install that has nothing wrong with it. `contents: read`,
+allows **60 calls an hour per IP**, shared by every job GitHub runs from that
+address, against 5,000 with a credential (measured 2026-09-11,
+`x-ratelimit-limit`), and a 403 there fails an install that has nothing wrong with it. `contents: read`,
 which `check.yml` already declares, is enough. Each key is written under both
 names GitHub answers on — `github.com` and `[ssh.github.com]:443`, which serve
 identical keys — since a machine whose outbound `:22` is closed reaches the
@@ -1980,9 +1973,8 @@ on:
     branches: [main]
   pull_request:
   schedule:
-    # 02:00 UTC is the fleet's slot: after the day's work, and finished well
-    # before this box's 04:00 reboot window. The runner slice these jobs share
-    # is CPU-capped, so the repos in it queue rather than compete.
+    # 02:00 UTC is the fleet's slot: after the day's work, so a red nightly
+    # is waiting when the next day starts.
     - cron: "0 2 * * *"
 
 permissions:
@@ -2103,7 +2095,7 @@ concurrency:
 
 jobs:
   lighthouse:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1

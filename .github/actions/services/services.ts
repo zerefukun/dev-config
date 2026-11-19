@@ -1,11 +1,12 @@
 /**
- * A throwaway PostgreSQL 16 and Redis 7 for one job, run from the runner's own
- * binaries under a directory the job owns, and gone when the job is.
+ * A throwaway PostgreSQL 16 and Redis 7 for one job, run under a directory the
+ * job owns, and gone when the job is.
  *
- * The runner's side of the contract: `initdb`, `pg_ctl` and `postgres` from
- * PostgreSQL 16 and `redis-server` 7 on the job's PATH, an account that is not
- * root (initdb refuses one), and Linux's /proc, which is how a pid is checked
- * to still be the server it was written for.
+ * The machine's side of the contract: `initdb`, `pg_ctl` and `postgres` from
+ * PostgreSQL 16 and `redis-server` 7 on PATH, which in CI the action's step
+ * before this one provides, an account that is not root (initdb refuses one),
+ * and Linux's /proc, which is how a pid is checked to still be the server it
+ * was written for.
  */
 import { existsSync, readFileSync } from "node:fs";
 import { appendFile, mkdir, readFile, rm } from "node:fs/promises";
@@ -24,10 +25,11 @@ const BINARIES = ["initdb", "pg_ctl", "postgres", "redis-server"] as const;
 
 /**
  * How many ports a start tries per server. Between the allocation and the
- * server's own bind another process can take the port, which on a shared box is
- * a race rather than a hypothetical; the server's refusal is what says it
- * happened, and a fresh port is the answer. Five lost races in a row is a box
- * with something wrong on it, not bad luck.
+ * server's own bind another process can take the port, which on a machine
+ * running anything else, a developer's or a job whose suite starts servers of
+ * its own, is a race rather than a hypothetical; the server's refusal is what
+ * says it happened, and a fresh port is the answer. Five lost races in a row is
+ * a machine with something wrong on it, not bad luck.
  */
 const ATTEMPTS = 5;
 

@@ -113,7 +113,7 @@ function expressionsIn(group: string): string {
 
 /**
  * The top-level `concurrency` block every repo's workflow owes, `ci-call` or
- * not: its runs queue on one self-hosted runner however the CI is written. The
+ * not: a run a newer push replaced holds a runner however the CI is written. The
  * exemption waives the shape of the call, not the repo's queue, so a workflow
  * that is missing or will not parse is reported here, the rule no exemption
  * reaches.
@@ -132,7 +132,7 @@ export function checkConcurrency(workflow: ConfigFile): Problem[] {
     problems.push({
       file: CI_WORKFLOW,
       message:
-        "the top-level `concurrency` block has to set `cancel-in-progress: true` — every CI run of a repo queues on its one self-hosted runner, and a run a newer push has replaced holds that runner until it finishes unless it is cancelled",
+        "the top-level `concurrency` block has to set `cancel-in-progress: true` — a run a newer push has replaced holds a runner, and the minutes a private repository pays for, until it finishes unless it is cancelled",
     });
   }
   const named = typeof group === "string" ? expressionsIn(group) : "";

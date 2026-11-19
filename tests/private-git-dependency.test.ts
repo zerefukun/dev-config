@@ -340,8 +340,8 @@ describe("the action, run", () => {
     expect(read.output.split(" ").slice(0, 2).join(" ")).toBe(run.publicKey);
   });
 
-  // The runner is a shared, persistent machine, so a key left in RUNNER_TEMP is
-  // a key another repo's job can read. The wrong implementation removes it on
+  // A key left in RUNNER_TEMP is a key every later step of the job can read,
+  // the repo's own dependencies' code among them. The wrong implementation removes it on
   // the success path alone — which is the same as never, since a job that fails
   // is exactly the job that stops early.
   test("leaves no key behind, whether the install passed or failed", async () => {
@@ -441,7 +441,7 @@ describe("the host keys the action decides against", () => {
   });
 
   // A 403 is what the unauthenticated ceiling on that endpoint looks like — 60
-  // an hour per IP, which every runner on one host shares. It must say which
+  // an hour per IP, shared by every job GitHub runs from that address. It must say which
   // call failed rather than leave an empty known_hosts behind it.
   test("a refused answer fails where it is read, naming the status", async () => {
     const server = Bun.serve({

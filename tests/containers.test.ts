@@ -81,10 +81,10 @@ describe("the workflow gate", () => {
       }),
     ).toEqual([
       containing(
-        ".github/actions/dockery/action.yml: runs.using: docker needs a container runtime, which no runner in this fleet has",
+        ".github/actions/dockery/action.yml: runs.using: docker runs a container; a server a job needs comes through the services action",
       ),
       containing(
-        ".github/workflows/db.yml: jobs.check.services.postgres needs a container runtime, which no runner in this fleet has — a server the job needs comes from the runner's own binaries",
+        ".github/workflows/db.yml: jobs.check.services.postgres runs a container; a server a job needs comes through the services action, which holds its major, binds 127.0.0.1 on a port the kernel picked and pulls no image",
       ),
     ]);
   });

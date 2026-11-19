@@ -5,7 +5,7 @@ await entry(async () => {
   const read = inputs("meta-url", "github-token");
   if (read["github-token"] === "") {
     throw new Error(
-      "github-token is empty — the host-key lookup would fall to the unauthenticated ceiling of 60 an hour per IP, which every runner on a host shares",
+      "github-token is empty — the host-key lookup would fall to the unauthenticated ceiling of 60 an hour per IP, shared by every job GitHub runs from that address",
     );
   }
 
