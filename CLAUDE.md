@@ -45,22 +45,24 @@ a change to a rule usually lands here too.
   whole run before anything starts, `if:` and `needs` included
   (actions/runner#4151) — so filing lives where the caller's own job can carry
   `issues: write`, and a repo with no nightly never names the file.
-- `.github/actions/*/` — the executable steps, which are the gates plus two.
+- `.github/actions/*/` — the executable steps, which are the gates plus three.
   Each is an `action.yml` and what it runs, which takes one of two shapes. A
   step whose logic is TypeScript runs a `*.main.ts` over the modules the suite
   drives. A step that is shell runs it as a body: inline in `action.yml` for
   `secret-scan`, `install` and `test-suite`, or as a script beside it for
-  `build` (`build/cache-paths.sh`). A new shell action takes the script shape, since
-  a file is what the suite can run and the shell-scripts gate reads, where an
-  inline body is reached only by extracting it. `install` and `build` are the
-  two that grade nothing. `install` is `bun install --frozen-lockfile`, and —
-  where the caller passed a key for a private git dependency — that key,
-  written, used and removed inside the action's own shell so no lane after it
-  runs holding the path of a private key. `build` is `bun run build` with the
-  paths the caller names kept in GitHub's Actions cache between runs. They are
-  actions because both jobs of `check.yml` run them, and one copy serves both
-  where a copy per job rots untested (#101). An action holds
-  more than one module when it holds more than one subject:
+  `build` (`build/cache-paths.sh`) and for the seal `test-suite` runs its suite
+  through (`test-suite/ci-seal.sh`). A new shell action takes the script shape,
+  since a file is what the suite can run and the shell-scripts gate reads, where
+  an inline body is reached only by extracting it. `install`, `build` and
+  `services` are the three that grade nothing. `install` is
+  `bun install --frozen-lockfile`, and — where the caller passed a key for a
+  private git dependency — that key, written, used and removed inside the
+  action's own shell so no lane after it runs holding the path of a private
+  key. `build` is `bun run build` with the paths the caller names kept in
+  GitHub's Actions cache between runs. Those two are actions because both jobs
+  of `check.yml` run them, and one copy serves both where a copy per job rots
+  untested (#101). `services` is the job's throwaway Postgres 16 and Redis 7,
+  the one way a job gets a server. An action holds more than one module when it holds more than one subject:
   `repo-contract/live.ts` is what the word "live" derives — everything a repo
   owes because it carries people — beside the contract every repo satisfies
   whether or not anyone is on the other end; `repo-contract/browser-suite.ts` is
@@ -255,7 +257,7 @@ a change to a rule usually lands here too.
   nothing about the tool that gate exists to drive. `test-suite.test.ts` is the
   same argument one level down: that gate is a shell script rather than a
   module, so the suite extracts the step out of the shipped `action.yml` and
-  runs it over fixture suites of its own. It needs the ci-seal helper installed, because
+  runs it over fixture suites of its own. It needs sudo for the ci-seal helper, because
   what it is grading is a network namespace. `nightly-issue.test.ts` is that
   argument once more, over the one step in this repo whose subject is an effect
   that leaves the system: it extracts the filing step out of its workflow and
@@ -342,7 +344,7 @@ reason and carry their duty the same way — a suite that spawns the real thing.
 `bunfig.toml` names which suite, per file, and says why `dev-server-derive.ts`
 is not with them.
 
-`bun test` needs a Postgres, a Redis, a chromium and the ci-seal helper. The
+`bun test` needs a Postgres, a Redis, a chromium and sudo for the ci-seal helper. The
 first because the replay gate's property is what two databases end up holding
 and the semantic fixtures' is what a real migration does to a real row; the
 second because a limiter's bucket is shared by two processes and its Redis can
@@ -351,9 +353,9 @@ reports; the fourth because the test-suite gate seals a run in a network
 namespace and nothing short of taking one says whether it holds. Neither
 `TEST_DATABASE_URL` nor `TEST_REDIS_URL` has a default, and each is refused when
 unset: the database suites create and **drop** databases on the server they are
-given and the conformance suite **flushes** its Redis, and `localhost` on this
-box is a host address one of the stacks or another job's throwaway server may be
-publishing. `tests/postgres.ts` is the one reader of the first.
+given and the conformance suite **flushes** its Redis, and `localhost` on a
+developer's machine, such as one running the fleet's stacks, is a host address
+a stack may be publishing. `tests/postgres.ts` is the one reader of the first.
 README's "Gating this repo" has the one-liners, including the browser install.
 
 Two runs may share one server, which is what two worktrees under review are.

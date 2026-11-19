@@ -19,8 +19,8 @@ const HOSTS = "github.com,[ssh.github.com]:443";
 
 /**
  * `metaUrl` is GitHub's `/meta`, and `token` is not optional: unauthenticated,
- * that endpoint allows 60 calls an hour PER IP — which every runner on one host
- * shares — against 5,000 with a credential (measured 2026-09-11,
+ * that endpoint allows 60 calls an hour PER IP, shared by every job GitHub runs
+ * from that address, against 5,000 with a credential (measured 2026-09-11,
  * `x-ratelimit-limit`). A 403 there fails an install that has nothing wrong
  * with it.
  */

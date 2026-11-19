@@ -441,7 +441,7 @@ describe("the host keys the action decides against", () => {
   });
 
   // A 403 is what the unauthenticated ceiling on that endpoint looks like — 60
-  // an hour per IP, which every runner on one host shares. It must say which
+  // an hour per IP, shared by every job GitHub runs from that address. It must say which
   // call failed rather than leave an empty known_hosts behind it.
   test("a refused answer fails where it is read, naming the status", async () => {
     const server = Bun.serve({

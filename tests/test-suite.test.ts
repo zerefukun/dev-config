@@ -22,18 +22,17 @@ import { materialise, type Tree } from "./tree.ts";
 setDefaultTimeout(30_000);
 
 const ACTION = new URL("../.github/actions/test-suite/action.yml", import.meta.url).pathname;
+const SEAL = join(dirname(ACTION), "ci-seal.sh");
 
 const STEP = await (async (): Promise<string> => {
   const document = Bun.YAML.parse(await Bun.file(ACTION).text());
   const steps = record(record(document)["runs"])["steps"];
   const scripts = (Array.isArray(steps) ? steps : [])
-    .map((step) => record(step))
-    .filter((step) => step["name"] === "Run the suite")
-    .map((step) => step["run"])
+    .map((step) => record(step)["run"])
     .filter((run): run is string => typeof run === "string");
   const [script, ...rest] = scripts;
   if (script === undefined || rest.length > 0) {
-    throw new Error(`test-suite has ${scripts.length} steps named "Run the suite", not one`);
+    throw new Error(`test-suite has ${scripts.length} run steps, not one`);
   }
   return script;
 })();
@@ -83,6 +82,7 @@ async function ran(
     env: {
       ...process.env,
       PATH: path,
+      GITHUB_ACTION_PATH: dirname(ACTION),
       RUNNER_TEMP: root,
       TEST_NETWORK: network,
       NIGHTLY: nightly,
@@ -174,6 +174,18 @@ test("takes its time", async () => {
 `,
 };
 
+/** A suite that prints the groups it runs in. */
+const GROUPS: Tree = {
+  "groups.test.ts": `import { expect, test } from "bun:test";
+
+test("reads its groups", () => {
+  const groups = Bun.spawnSync(["id", "-G"]).stdout.toString().trim();
+  console.log(\`groups=\${groups}\`);
+  expect(groups).not.toBe("");
+});
+`,
+};
+
 const CLEAN: Tree = {
   "clean.test.ts": `import { expect, test } from "bun:test";
 
@@ -221,6 +233,18 @@ describe("the sealed lane", () => {
     expect(reportUid).toBe(self);
   });
 
+  // The wrong implementation keeps the invoker's supplementary groups, and on
+  // the hosted image one of them is `docker`: the daemon's socket is a file
+  // the namespace does not scope, and the daemon reaches the network.
+  test("a sealed suite runs in the invoker's primary group and no other", async () => {
+    const invoker = Bun.spawnSync(["id", "-G"]).stdout.toString().trim().split(" ");
+    // An invoker in one group cannot tell the two apart, and fails saying so.
+    expect(invoker.length).toBeGreaterThan(1);
+    const { status, output } = await ran(GROUPS);
+    expect(status).toBe(0);
+    expect(output).toContain(`groups=${process.getgid?.() ?? ""}\n`);
+  });
+
   test("a reason made of whitespace is no reason, and the seal holds", async () => {
     const { status, output } = await ran(REACHES, "   ");
     expect(output).not.toContain("::notice::the suite reaches a real network");
@@ -255,7 +279,13 @@ describe("the sealed lane", () => {
     const marker = join(root, "junit.xml");
     const proc = Bun.spawn(["bash", "-c", STEP], {
       cwd: root,
-      env: { ...process.env, RUNNER_TEMP: root, TEST_NETWORK: "", NIGHTLY: "false" },
+      env: {
+        ...process.env,
+        GITHUB_ACTION_PATH: dirname(ACTION),
+        RUNNER_TEMP: root,
+        TEST_NETWORK: "",
+        NIGHTLY: "false",
+      },
       stdout: "ignore",
       stderr: "ignore",
     });
@@ -313,7 +343,7 @@ test("unreached", () => {
  * A `sudo` of the suite's own, first on PATH, standing in for sudo and the
  * ci-seal helper: the call the step makes to it is graded here, on any
  * machine, and the namespace it takes is graded by the sealed cases above,
- * where the helper is installed. It logs each call, one argument
+ * where sudo runs the helper. It logs each call, one argument
  * a line, refuses any call that is not the helper's documented shape, and runs
  * the command the way the helper promises to — with that PATH and TMPDIR and
  * nothing else — or fails every call when `refuse` is set.
@@ -326,7 +356,7 @@ function standIn(refuse = false): (root: string) => Promise<Record<string, strin
       "#!/usr/bin/env bash",
       `printf '%s\\n' "$@" '--end--' >> "${join(root, "seal.calls")}"`,
       refuse ? "exit 1" : "",
-      '[ "$1 $2 $3" = "--non-interactive /usr/local/sbin/ci-seal --path" ] || exit 64',
+      `[ "$1 $2 $3" = "--non-interactive ${SEAL} --path" ] || exit 64`,
       '[ "$5 $7" = "--tmpdir --" ] || exit 64',
       "path=$4 tmp=$6; shift 7",
       'exec env -i PATH="$path" TMPDIR="$tmp" "$@"',
@@ -379,7 +409,7 @@ describe("the call the step makes to the seal", () => {
     const [probe, run] = await calls(root);
     const head = [
       "--non-interactive",
-      "/usr/local/sbin/ci-seal",
+      SEAL,
       "--path",
       handed["PATH"] ?? "",
       "--tmpdir",
@@ -404,7 +434,7 @@ describe("the call the step makes to the seal", () => {
 
   test("fails the step by name when the helper cannot take the namespace", async () => {
     const { status, output } = await ran(READS_TMPDIR, "", "", "false", standIn(true));
-    expect(output).toContain("/usr/local/sbin/ci-seal could not take one");
+    expect(output).toContain("the ci-seal helper could not take one");
     expect(status).not.toBe(0);
   });
 });

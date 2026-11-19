@@ -25,6 +25,8 @@ while IFS= read -r line; do
   path=${path%"${path##*[![:space:]]}"}
   [ -n "$path" ] || continue
   [[ $path != /* ]] || refuse "the build cache path $path is absolute; name a path relative to the repository root, such as .next/cache"
+  [[ $path != "~"* ]] || refuse "the build cache path $path starts with ~, which actions/cache expands to the home directory; name a path relative to the repository root, such as .next/cache"
+  [[ $path != *[\*\?\[]* && $path != "!"* ]] || refuse "the build cache path $path has a glob character, which actions/cache expands; name each directory literally, such as .next/cache"
   IFS=/ read -ra segments <<< "$path"
   normal=
   for segment in "${segments[@]}"; do
@@ -51,10 +53,11 @@ done <<< "$BUILD_CACHE"
 
 prefix=build-cache-$(sha256sum bun.lock | cut -c1-16)-
 suffix=$(od -An -N8 -tx1 /dev/urandom | tr -d ' \n')
+end=paths-end-$(od -An -N16 -tx1 /dev/urandom | tr -d ' \n')
 {
-  echo "paths<<paths-end"
+  echo "paths<<$end"
   printf '%s\n' "${paths[@]}"
-  echo "paths-end"
+  echo "$end"
   echo "key=$prefix$suffix"
   echo "restore-key=$prefix"
 } >> "$GITHUB_OUTPUT"

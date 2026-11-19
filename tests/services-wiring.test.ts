@@ -66,7 +66,7 @@ const STARTED = {
 } as const;
 
 // The wrong implementations: a stop that runs only when the job passed, which
-// leaves a failed job's servers on the box; a stop placed before a step that
+// leaves a failed job's servers on the machine; a stop placed before a step that
 // still reads the URLs; a start the URLs cannot name, because it has no id;
 // and a URL written out by hand — 5432 — instead of read from the start that
 // picked the port.

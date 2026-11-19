@@ -60,26 +60,29 @@ own ports are on the other loopback either way: a server the runner started on
 statement as "this lane has no database".
 
 The seal is taken by the `ci-seal` helper, `ci-seal.sh` beside the action,
-which the action's first step installs as `/usr/local/sbin/ci-seal`. The run
-step's one call to it is:
+which the run step calls in place. The step's one call to it is:
 
 ```sh
-sudo --non-interactive /usr/local/sbin/ci-seal --path "$PATH" --tmpdir "${TMPDIR:-/tmp}" -- CMD ARGS…
+sudo --non-interactive "$GITHUB_ACTION_PATH/ci-seal.sh" --path "$PATH" --tmpdir "${TMPDIR:-/tmp}" -- CMD ARGS…
 ```
 
 Three facts about it, all load-bearing if the step is ever edited:
 
 - **Only the helper is root.** Creating a network namespace needs privilege:
   the unprivileged form (`unshare --map-root-user`) is refused where AppArmor's
-  `kernel.apparmor_restrict_unprivileged_userns` reads `1`. On GitHub's hosted runners the job's account has passwordless sudo
-  and the job owns the machine, so the helper is not a privilege boundary: it
-  isolates the suite from the network, and is the one place that takes the
-  namespace and gives up root again. A machine where it cannot take one fails
+  `kernel.apparmor_restrict_unprivileged_userns` reads `1`. On GitHub's hosted
+  runners the job's account has passwordless sudo and the job owns the
+  machine, so the helper is not a privilege boundary: it isolates the suite
+  from the network, and is the one place that takes the namespace and gives up
+  root again. A machine where it cannot take one fails
   the step by name rather than running unsealed.
-- **The suite runs as the invoking user.** The helper hands the command back
-  to the user that called it, so nothing the suite writes — coverage,
-  snapshots, the junit report — lands root-owned in a workspace the steps after
-  it still have to write to.
+- **The suite runs as the invoking user, in its primary group alone.** The
+  helper hands the command back to the user that called it, so nothing the
+  suite writes — coverage, snapshots, the junit report — lands root-owned in a
+  workspace the steps after it still have to write to. It drops the user's
+  supplementary groups, because a group can open a socket the namespace does
+  not scope: the hosted image's runner account is in `docker`, and the Docker
+  daemon reaches the network.
 - **`PATH` and `TMPDIR` are handed across, and nothing else is promised.**
   `sudo` resets the environment, so the step restates both: `PATH` because the
   Bun setup-bun installed is not on `secure_path`, `TMPDIR` because a machine
@@ -87,6 +90,11 @@ Three facts about it, all load-bearing if the step is ever edited:
   `noexec` `/tmp`, a larger disk) means every process to see it, the suite's
   included. Unset, the step hands `/tmp`, which is what a process reads an
   unset `TMPDIR` as.
+
+This repo's own suite runs the step over fixture suites the same way, calling
+the helper in the checkout, so a developer running `tests/test-suite.test.ts`
+needs sudo that answers without a prompt: passwordless, or `sudo -v` run first
+in the same terminal.
 
 ## What the seal costs
 
@@ -99,9 +107,10 @@ the run fails on connection refused.
 
 The fix is not the escape. A datastore a unit lane needs is in-process (PGlite,
 an embedded store), started by the suite itself inside the seal, or reached
-over a unix socket, all of which work inside the seal untouched; a datastore a _suite_ needs is the `database` job's
-subject, and that job does not run through this step. The escape is for a suite
-that reaches somebody else's host, which is a different thing and a rarer one.
+over a unix socket, all of which work inside the seal untouched; a datastore a
+_suite_ needs is the `database` job's subject, and that job does not run
+through this step. The escape is for a suite that reaches somebody else's host,
+which is a different thing and a rarer one.
 
 ## Naming a suite that has to reach a network
 
@@ -203,7 +212,7 @@ The runner cancels a job by signalling the process it started — SIGINT, then
 SIGTERM 7.5 seconds later, then SIGKILL 2.5 seconds after that — and by
 signalling nothing else in the tree. A suite left in the foreground therefore
 outlives the shell that started it: still running, inside a namespace nothing
-on the box can see into, on a machine the runner is about to reclaim. So the
+else can see into, on a machine the runner is about to reclaim. So the
 suite runs as a job this step owns and the signal is forwarded to it; `sudo`
 passes it down, the helper hands it on to the command it runs, and the tree
 goes with it.

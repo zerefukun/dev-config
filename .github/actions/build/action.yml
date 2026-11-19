@@ -11,9 +11,10 @@ inputs:
       GitHub's Actions cache before the build and saved there after one that
       passed, keyed on bun.lock, the newest save under that key restored. A
       cache that cannot be read or written warns and costs the cache, never the
-      build. A path that is absolute, has a `..` segment, is the repository
-      root, is named twice or sits inside another named path, or a repository
-      with no bun.lock, is refused before the build. Empty, the default, runs
+      build. A path that is absolute, starts with `~`, holds a glob character,
+      has a `..` segment, is the repository root, is named twice or sits inside
+      another named path, or a repository with no bun.lock, is refused before
+      the build. Empty, the default, runs
       `bun run build` and keeps nothing.
     default: ""
 

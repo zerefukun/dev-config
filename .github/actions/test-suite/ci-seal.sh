@@ -1,8 +1,11 @@
 #!/bin/bash
-# sudo --non-interactive /usr/local/sbin/ci-seal --path P --tmpdir T -- CMD [ARGS...]
+# sudo --non-interactive ci-seal.sh --path P --tmpdir T -- CMD [ARGS...]
 #
 # Runs CMD with ARGS, verbatim, as the account that invoked sudo (never root),
-# in a fresh network namespace whose only interface is lo, up. CMD's
+# in its primary group and no other, in a fresh network namespace whose only
+# interface is lo, up. The supplementary groups go because a group can open a
+# filesystem socket the namespace does not scope: the hosted image's runner
+# account is in `docker`, and the Docker daemon reaches the network. CMD's
 # environment is exactly PATH=P, TMPDIR=T, HOME (the account's home) and
 # LANG=C.UTF-8. CMD replaces this script, so the signals sudo relays reach it
 # and no wrapper process is left. Refuses an invoker that is root or not an
@@ -39,6 +42,6 @@ shift 5
 exec unshare --net -- /bin/bash -c '
   set -e
   ip link set lo up
-  exec setpriv --reuid="$1" --regid="$2" --init-groups --no-new-privs --inh-caps=-all --bounding-set=-all -- \
+  exec setpriv --reuid="$1" --regid="$2" --clear-groups --no-new-privs --inh-caps=-all --bounding-set=-all -- \
     env -i PATH="$3" TMPDIR="$4" HOME="$5" LANG=C.UTF-8 "${@:6}"
 ' ci-seal "$uid" "$gid" "$path" "$tmpdir" "$home" "$@"

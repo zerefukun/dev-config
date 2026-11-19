@@ -115,11 +115,6 @@ jobs:
         with:
           command: start
 
-      # The test-suite gate's own cases take a network namespace through the
-      # helper the test-suite action installs, so this job installs the same
-      # copy the same way.
-      - run: sudo install -o root -g root -m 0755 .github/actions/test-suite/ci-seal.sh /usr/local/sbin/ci-seal
-
       # `--coverage` by hand: it is the one guarantee of the substituted action
       # this step does keep, and without it the floor above it declares is
       # applied to nothing. docs/gates/test-suite.md.

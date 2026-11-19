@@ -5,12 +5,9 @@ import { required } from "../.github/actions/_lib/gate.ts";
  * refused rather than defaulted — the same refusal `TEST_REDIS_URL` carries,
  * for what turns out to be the same reason.
  *
- * The old default was `localhost:5432`, argued for on the grounds that a suite
- * naming its own databases costs a stranger nothing. That argument held while
- * `localhost` meant a developer's laptop. It does not on a box that runs the
- * fleet's stacks and its CI runners: 5432 there is a host address some stack
- * may be publishing, and what this suite does to whatever answers is `create
- * database` and `drop database`. Free today is not a property to build on, and
+ * A default of `localhost:5432` is a host address some stack may be publishing
+ * on a machine that runs the fleet's stacks, and what this suite does to
+ * whatever answers is `create database` and `drop database`. Free today is not a property to build on, and
  * a suite that guesses is one bind away from dropping databases it does not
  * own.
  *

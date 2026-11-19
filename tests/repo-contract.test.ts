@@ -306,7 +306,7 @@ describe("the CI workflow cancels a run a newer push replaced", () => {
   });
 
   // `ci-call` waives the shape of the call into check.yml, and a repo whose CI
-  // is its own jobs still queues on its one runner. The wrong implementation
+  // is its own jobs still holds a runner per replaced run. The wrong implementation
   // puts the rule among the call's problems, which the exemption drops.
   test("ci-call does not waive it", async () => {
     expect(await contract(withConcurrency(""), { exemptions: ["ci-call"] })).toEqual([

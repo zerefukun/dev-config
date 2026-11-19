@@ -792,9 +792,10 @@ export async function repoContract(root: string, contract: Contract): Promise<Pr
   // waives two of them, which is a thing to be able to see rather than to
   // discover. A repo whose CI is not a call into check.yml has no call to pass
   // `upgrade-gate: true` to. What it does have is steps and a queue: the
-  // browser suite is a job the repo runs itself, and its runs still queue on
-  // its one runner. So the queue is read beside the call rather than inside it,
-  // and the exemption touches the call alone, keeping its steps. A workflow
+  // browser suite is a job the repo runs itself, and a run a newer push
+  // replaced still holds a runner until it finishes. So the queue is read
+  // beside the call rather than inside it, and the exemption touches the call
+  // alone, keeping its steps. A workflow
   // that is missing or will not parse is the queue's to report, the one rule
   // no exemption reaches, so it is reported once whatever the exemptions.
   const workflow = await readConfig(root, CI_WORKFLOW, "YAML");

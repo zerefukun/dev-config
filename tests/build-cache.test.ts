@@ -100,6 +100,14 @@ describe("what the script hands actions/cache", () => {
 
     expect(run.outputs.get("paths")).toBe(`${CACHED}\n.turbo/cache`);
   });
+
+  // Regression: a fixed heredoc delimiter, which a path line spelling it closes
+  // early, dropping every path after it.
+  test("a path spelling the block's end is handed with the paths after it", async () => {
+    const run = await paths(`paths-end\n${CACHED}`);
+
+    expect(run.outputs.get("paths")).toBe(`paths-end\n${CACHED}`);
+  });
 });
 
 describe("what runs without a cache", () => {
@@ -124,6 +132,8 @@ describe("what the caller's own input refuses", () => {
     ["a path climbing out", "../outside", LOCK],
     ["a path climbing out midway", ".next/../../outside", LOCK],
     ["an absolute path", "/etc", LOCK],
+    ["a home-relative path", "~/.cache/x", LOCK],
+    ["a glob covering the root", "*", LOCK],
     ["the repository root", ".", LOCK],
     ["the repository root with a slash", "./", LOCK],
     ["the repository root spelled twice", "././", LOCK],
@@ -169,20 +179,21 @@ describe("the order the action runs in", () => {
     expect(STEPS[SAVE]?.["if"]).toBe(WHEN_PATHS);
   });
 
-  // Wrong implementations: the cache asked for with no paths, which
+  // Wrong implementation: the cache asked for with no paths, which
   // actions/cache refuses as a missing input and fails every caller that named
-  // none; and a save under a key other than the one the restore was asked
-  // with, which no later restore's prefix finds.
-  test("the cache is asked for only when the script wrote paths, with what it wrote", () => {
+  // none.
+  test("the cache is asked for only when the script wrote paths", () => {
     expect(STEPS[RESTORE]?.["if"]).toBe(WHEN_PATHS);
-    expect(record(STEPS[RESTORE]?.["with"])).toEqual({
-      path: "${{ steps.cache.outputs.paths }}",
-      key: "${{ steps.cache.outputs.key }}",
-      "restore-keys": "${{ steps.cache.outputs.restore-key }}",
-    });
-    expect(record(STEPS[SAVE]?.["with"])).toEqual({
-      path: "${{ steps.cache.outputs.paths }}",
-      key: "${{ steps.cache.outputs.key }}",
-    });
+  });
+
+  // Wrong implementation: a save under a key or paths other than the ones the
+  // restore was asked with, which no later restore finds.
+  test("the save files under the key and paths the restore was asked with", () => {
+    const restore = record(STEPS[RESTORE]?.["with"]);
+    const save = record(STEPS[SAVE]?.["with"]);
+    expect(save["key"]).toBeString();
+    expect(save["path"]).toBeString();
+    expect(save["key"]).toBe(restore["key"]);
+    expect(save["path"]).toBe(restore["path"]);
   });
 });

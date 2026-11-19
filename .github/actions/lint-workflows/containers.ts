@@ -4,9 +4,9 @@ import { isList, record } from "../_lib/gate.ts";
  * Every place a workflow or action asks for a container runtime, named the way
  * a refusal has to name it: a job's `container`, each of its `services`, a step
  * running a `docker://` image, and an action whose `runs.using` is `docker`.
- * The fleet's runners have no runtime to give any of them — a server a job
- * needs comes from the runner's own binaries, as the services action starts
- * them.
+ * A server a job needs comes one way, through the services action, which
+ * holds its major, binds 127.0.0.1 on a port the kernel picked and pulls no
+ * image.
  *
  * Read off the parsed document at exactly these depths: a walk would take an
  * action input that happens to be called `container`. An action referenced by

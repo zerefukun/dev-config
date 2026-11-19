@@ -73,7 +73,7 @@ export async function workflowGate(
   const containers = documents.read.flatMap(({ file, value }) =>
     containersIn(value).map((what) => ({
       file,
-      message: `${what} needs a container runtime, which no runner in this fleet has — a server the job needs comes from the runner's own binaries (the services action starts Postgres and Redis that way)`,
+      message: `${what} runs a container; a server a job needs comes through the services action, which holds its major, binds 127.0.0.1 on a port the kernel picked and pulls no image`,
     })),
   );
 

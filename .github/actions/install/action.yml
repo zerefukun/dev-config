@@ -16,8 +16,8 @@ inputs:
   github-token:
     description: >-
       The token GitHub's host-key lookup is made with. Unauthenticated that
-      endpoint allows 60 calls an hour per IP, which every runner on one host
-      shares; `contents: read` is enough for it.
+      endpoint allows 60 calls an hour per IP, shared by every job GitHub
+      runs from that address; `contents: read` is enough for it.
     default: ${{ github.token }}
   meta-url:
     description: >-
