@@ -189,8 +189,10 @@ runs:
         # (actions/runner's ProcessInvoker: SIGINT, 7.5s, SIGTERM, 2.5s,
         # SIGKILL, to the entry process alone), so a foreground `bun test` is
         # left running on a machine about to be reclaimed — and inside a
-        # namespace where nothing else can see it. Forwarding is the whole fix:
-        # sudo passes the signal down, and the tree goes with it.
+        # namespace where nothing else can see it. Forwarded, the signal reaches
+        # the suite's first process, through sudo when sealed, and nothing it
+        # started: the seal takes no process namespace, so a process the suite
+        # started can outlive the step either way (zerefukun/dev-config#18).
         # Through `env` rather than exported, so the budget survives the seal,
         # which promises the command the PATH and TMPDIR it is handed and
         # nothing else of this environment. Empty off a nightly, where `env` with no assignments is

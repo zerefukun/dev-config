@@ -264,8 +264,10 @@ then SIGKILL 2.5 seconds after that — and by signalling nothing else in the
 tree. A suite left in the foreground therefore
 outlives the shell that started it: still running, inside a namespace nothing
 else can see into, on a machine the runner is about to reclaim. So the
-suite runs as a job this step owns and the signal is forwarded to it; `sudo`
-passes it down, the helper hands it on to the command it runs, and the tree
-goes with it. Unsealed, the signal goes to the suite's first process alone, so
-a process that a suite run through its `test` script started can outlive the
-step.
+suite runs as a job this step owns and the signal is forwarded to it. Sealed,
+`sudo` relays it to the command the helper runs, which is the suite's first
+process; unsealed, it goes to that process directly. Either way it reaches that
+process alone: the helper takes a network namespace and no process namespace,
+so a process the suite started, such as `bun test` under a `test` script's
+`bun run` or a grandchild a case spawned, can outlive the step, sealed or not
+(zerefukun/dev-config#18).

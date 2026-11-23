@@ -511,14 +511,14 @@ base enables exactly the rules the plugin defines.
 is not with them.
 
 The `test` script is `bun test --timeout 120000`, and that bound is every case's
-and every hook's here unless one names its own. A case's time on this box is
-its CPU time over the share of a core it is given, and the live sites' weight
-pushes an agent's or a runner's share below 3% when the box is full: the Bun.sql
-differential needs about 0.1s of CPU, took 3.9s at a 3% quota, and timed out at
-bun's 5s default in a full run at load 40. So the bound is sized from the other
-end, by CI's job limit: the seven green runs of 2026-11-18 and 19 took 13m29s
-to 13m46s, their suite step 12m30s to 12m38s, so the slowest plus one case
-hung to 120s is 15m46s, and `ci.yml` gives the job 20 minutes so that the hung
+and every hook's here unless one names its own. A case's time is its CPU time
+over the share of a core it is given, and on a machine shared with other work
+that share can fall below 3%: upstream measured the Bun.sql differential, about
+0.1s of CPU, taking 3.9s at a 3% quota and timing out at bun's 5s default on
+its shared runner box. GitHub's ubuntu-24.04 runner gives a job its machine,
+and the bound is sized by CI's job limit there: the green run of 2026-11-23
+(45216934019) took 13m17s, its suite step 12m24s, so that run plus one case
+hung to 120s is 15m17s, and `ci.yml` gives the job 20 minutes so that the hung
 case is still named. Only the flag reaches every file: bun 1.4.4 ignores a
 `timeout` key in `bunfig.toml`, and a `setDefaultTimeout` in a preload binds
 only the first file, so a bare `bun test` runs on 5s. So does a `bun test` a
@@ -527,11 +527,11 @@ whose time decides its case does (`SPAWNED_CASE_MS` in `tests/tree.ts`).
 
 Three hooks name longer bounds, each for a whole run of a tool:
 `tests/count-budget.test.ts` 600s and `tests/invariant-sweep.test.ts` 300s for
-Playwright runs, count-budget's including one with every core busy, each hook
-about 3m45s in those CI runs, and `tests/request-timing-next-fixture.ts` 300s
-for a cold `next build` and boot, about 10s there. A hang in either 300s hook
-ends inside the job, by 18m36s at the latest; one in the 600s hook ends at
-20m01s, and the job is cancelled with nothing named. One case names a longer
+Playwright runs, count-budget's including one with every core busy, and
+`tests/request-timing-next-fixture.ts` 300s for a cold `next build` and boot.
+A hang in either 300s hook adds at most five minutes to that run's 13m17s and
+ends inside the job; one in the 600s hook can add ten, past the job's 20
+minutes, and the job is then cancelled with nothing named. One case names a longer
 bound too: `tests/interleaving.test.ts`'s search of 8 400 interleavings, 600s
 for about 7s of CPU, which a 3% share stretches past 120s, and a hang in it
 ends as the 600s hook's does. The shorter bounds left, in `tests/probe.test.ts`
@@ -564,11 +564,14 @@ the pin in `.github/actions/_lib/k6.sh` and kept in
 downloads it once per pin. Every k6 run in that suite is pointed at a stub
 server the case starts on loopback, and nothing else.
 
-Two runs may share one server, which is what two worktrees under review are.
-Every database either end makes is named for what tells the runs apart: the
-suite's own carry the process that created them, and the three the gates build
-for themselves — `upgrade_path_<digest>`, `semantic_fixtures_<digest>` and
-`backfill_<digest>` — carry the checkout they are working on.
+Two runs may share one Postgres or one MySQL, which is what two worktrees under
+review are. Every database either end makes is named for what tells the runs
+apart: the suite's own carry the process that created them, and the three the
+gates build for themselves — `upgrade_path_<digest>`, `semantic_fixtures_<digest>`
+and `backfill_<digest>` — carry the checkout they are working on. Two runs may
+not share one Redis: the limiter conformance suite flushes it between its
+cases, which wipes the other run's keys whatever prefix they carry, so each run
+gets a Redis of its own.
 
 This repo runs its own gates on itself in CI, from the working tree, with five
 structural facts named in `ci.yml`. Three are exemptions of the repo contract:

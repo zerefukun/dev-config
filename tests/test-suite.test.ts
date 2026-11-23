@@ -48,8 +48,9 @@ interface Run {
 async function ownerOf(path: string): Promise<number | undefined> {
   try {
     return (await stat(path)).uid;
-  } catch {
-    return undefined;
+  } catch (error) {
+    if (error instanceof Error && "code" in error && error.code === "ENOENT") return undefined;
+    throw error;
   }
 }
 

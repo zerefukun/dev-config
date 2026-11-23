@@ -61,7 +61,7 @@ jobs:
       #
       # The fifth is the test-suite action, which the step below substitutes for
       # rather than uses. Its seal puts the run in a network namespace, and the
-      # Postgres and Redis this suite needs listen on the host's loopback, which
+      # Postgres, Redis and MySQL this suite needs listen on the host's loopback, which
       # that namespace does not reach. Substituting drops three guarantees every
       # other repo gets — the seal itself, the junit report, and the two greps
       # over it that refuse a skipped test and an assertion-free one — so this
@@ -77,8 +77,10 @@ jobs:
 
       - uses: ./.github/actions/duplicate-code
 
-      # This repo's own shell is the three libraries the composites source, and
-      # the gate that reads a consuming repo's scripts reads them here.
+      # This repo's own shell is the five scripts under .github/actions: the
+      # two libraries the composites source, the k6 loader the capacity-ramp
+      # command runs, and the scripts the build and test-suite actions run. The
+      # gate that reads a consuming repo's scripts reads them here.
       - uses: ./.github/actions/shell-scripts
 
       # re2 is the one dependency whose install script runs (package.json's

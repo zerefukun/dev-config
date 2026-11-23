@@ -1647,7 +1647,11 @@ action's own suite runs the same binaries, so they stay on `PATH` for
 `/usr/lib/postgresql/16/bin`, and Ubuntu's `mysqld` in `/usr/sbin` under an
 AppArmor profile that confines it to the system data directory, which the
 action's CI step unloads and a machine running it by hand unloads the same way
-(`sudo apparmor_parser --remove /etc/apparmor.d/usr.sbin.mysqld`). The root is
+(`sudo apparmor_parser --remove /etc/apparmor.d/usr.sbin.mysqld`). On a machine
+whose own MySQL serves real data that leaves the system server unconfined until
+the profile is loaded again, which
+`sudo apparmor_parser --replace /etc/apparmor.d/usr.sbin.mysqld` does once the
+throwaway is stopped. The root is
 named for the checkout, so two checkouts on one machine keep two sets:
 
 ```sh
@@ -1984,7 +1988,8 @@ The rest of the shape holds on a machine the job has to itself:
   hands it to the server; another process taking the port in between is a race
   the server's own refusal reports, and the action answers it with a fresh
   port, five times before it fails. The URLs are the action's outputs,
-  `${{ steps.services.outputs.database-url }}` and `redis-url`.
+  `${{ steps.services.outputs.database-url }}`, `redis-url` and, after a start
+  with `mysql: true`, `mysql-url`.
 - **The boot gate's app gets an allocated port too.** `health-url` defaults to
   `http://localhost:${PORT}/api/health`, where `PORT` is a free port the job
   bound and exported before the gate runs, for the same reason. `PORT` is the
@@ -1993,9 +1998,9 @@ The rest of the shape holds on a machine the job has to itself:
 - **The servers' data lives under `RUNNER_TEMP`**, the directory the runner
   gives the job for its own files, outside the workspace the gates read. The
   `services` action's `stop`, the job's last step under `if: always()`, takes
-  both servers down and deletes their directory, so the job ends with nothing
-  of its own running rather than leaving the runner to reap two daemons as
-  orphans; a job that failed before `start` ran has nothing to stop, and the
+  every server the start left down and deletes their directory, so the job
+  ends with nothing of its own running rather than leaving the runner to reap
+  daemons as orphans; a job that failed before `start` ran has nothing to stop, and the
   step is nothing at all. Durability is off (`fsync`, `full_page_writes`,
   `synchronous_commit`), since nothing there outlives the job.
 - **The build cache lives in GitHub's Actions cache.** The `build` action
@@ -2192,14 +2197,16 @@ rather than after a full dependency resolution.
 The steps that are shell or a script rather than a `bun run` live in
 `.github/actions/` as composite actions — `secret-scan`, `repo-contract`,
 `stack-gate`, `suppression-hygiene`, `duplicate-code`, `shell-scripts`,
-`compose-lint`, `install`, `build`, `test-suite`, `mutation-lane`, `db-gate`,
-`lint-workflows` — so the workflow above and any repo that has to run the same thing outside it
-share one copy. `install` and `build` are the two that are not gates, and are
-actions for a reason of their own: both jobs run them, so one copy serves both
-where a copy per job could rot untested. `install` is
+`compose-lint`, `install`, `build`, `services`, `test-suite`, `mutation-lane`,
+`db-gate`, `lint-workflows` — so the workflow above and any repo that has to
+run the same thing outside it share one copy. `install`, `build` and
+`services` are the three that are not gates. `install` and `build` are actions
+for a reason of their own: both jobs run them, so one copy serves both where a
+copy per job could rot untested. `install` is
 `bun install --frozen-lockfile` plus the credential a private git dependency
 needs; `build` is `bun run build` with the paths `build-cache` names restored
-before it and saved after it.
+before it and saved after it. `services` is a job's throwaway servers, under
+"Where it runs".
 `check.yml` references them by full path and SHA rather than `./`: inside a
 called workflow a relative `uses:` resolves against the _caller's_ checkout, and
 the alternative — checking this repo out into the caller's workspace — puts its
