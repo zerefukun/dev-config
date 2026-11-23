@@ -172,7 +172,7 @@ export async function runPlan(
   const Shared = Context.Service<{
     readonly lock: Fx.Semaphore.Semaphore;
     readonly pool: Fx.Pool.Pool<void>;
-  }>("@gokayo43/dev-config/request-timing/conformance/effect/Shared");
+  }>("@zerefukun/dev-config/request-timing/conformance/effect/Shared");
   const runtime = ManagedRuntime.make(
     Layer.effect(
       Shared,

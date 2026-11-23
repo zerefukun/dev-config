@@ -464,7 +464,7 @@ test("walks", () => {
     name: "then, finally, the runner, a retry helper and a property each run what they are given",
     source: `import { expect, test } from "bun:test";
 import fc from "fast-check";
-import { check } from "@gokayo43/dev-config/property";
+import { check } from "@zerefukun/dev-config/property";
 import { retry } from "./retry.ts";
 test.each([1, 2])("reads %d", async (row) => {
   await Promise.resolve(row).then((value) => expect(value).toBe(row));

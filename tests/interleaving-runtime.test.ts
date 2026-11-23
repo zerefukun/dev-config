@@ -108,7 +108,7 @@ describe("loud when Effect changes", () => {
   // fact it rests on fails, and one whose message does not say why.
   test("on Effect 3, importing the export says which Effect it found and which it needs", async () => {
     expect(await underBrokenEffect("real", "3.22.0")).toBe(
-      "@gokayo43/dev-config/interleaving runs on effect 4, and this process's effect is 3.22.0: Effect 3 schedules fibers in a way simulate cannot drive",
+      "@zerefukun/dev-config/interleaving runs on effect 4, and this process's effect is 3.22.0: Effect 3 schedules fibers in a way simulate cannot drive",
     );
   });
 });

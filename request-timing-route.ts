@@ -9,7 +9,7 @@
  * that reads them runs this file's source, so the two are different module
  * instances that agree only on `Symbol.for`'s key.
  */
-const MARK = Symbol.for("@gokayo43/dev-config/request-timing/route");
+const MARK = Symbol.for("@zerefukun/dev-config/request-timing/route");
 
 /** What a route handler was wrapped as: an operation named by its pattern, or an envelope that carries procedures. */
 export type RouteMark =

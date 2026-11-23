@@ -1,6 +1,6 @@
 # Request timing
 
-`@gokayo43/dev-config/request-timing` records, per operation a server app
+`@zerefukun/dev-config/request-timing` records, per operation a server app
 serves, where the time went: waiting on the database (`db`), on an outside HTTP
 service (`out`), on an in-memory store such as Redis (`store`), and the rest.
 Each operation closes into one record, a JSON line on the app's stdout, and the
@@ -31,7 +31,7 @@ In this order:
    nothing catches it.
 
    ```ts
-   import { requestTiming } from "@gokayo43/dev-config/request-timing";
+   import { requestTiming } from "@zerefukun/dev-config/request-timing";
 
    export const timing = requestTiming({
      sink: (record) => console.log(JSON.stringify({ service: "api", ...record })),
@@ -56,7 +56,7 @@ In this order:
    SMTP) with `measure` directly:
 
    ```ts
-   import { measure } from "@gokayo43/dev-config/request-timing";
+   import { measure } from "@zerefukun/dev-config/request-timing";
 
    const sent = await measure("out", () => mailer.send(message));
    ```
@@ -117,12 +117,12 @@ What it leaves alone:
 
 ## Elysia
 
-`@gokayo43/dev-config/request-timing/elysia` is the entry connector for an
+`@zerefukun/dev-config/request-timing/elysia` is the entry connector for an
 Elysia app. Mount it once, after the error handler and ahead of every route,
 since Elysia applies a hook only to the routes registered after it:
 
 ```ts
-import { requestTimingPlugin } from "@gokayo43/dev-config/request-timing/elysia";
+import { requestTimingPlugin } from "@zerefukun/dev-config/request-timing/elysia";
 
 export const app = new Elysia().use(errorHandler).use(requestTimingPlugin(timing)).use(routes);
 ```
@@ -170,7 +170,7 @@ export const app = new Elysia().use(errorHandler).use(requestTimingPlugin(timing
 
 ## TanStack Start
 
-`@gokayo43/dev-config/request-timing/tanstack-start` is the entry connector for
+`@zerefukun/dev-config/request-timing/tanstack-start` is the entry connector for
 a TanStack Start app. An app mounts its two halves once each: the server
 entry's handler, wrapped, and a function middleware that names the operation of
 a server function called over HTTP.
@@ -178,7 +178,7 @@ a server function called over HTTP.
 ```ts
 // src/server.ts
 import { createStartHandler, defaultStreamHandler } from "@tanstack/react-start/server";
-import { timedStartHandler } from "@gokayo43/dev-config/request-timing/tanstack-start";
+import { timedStartHandler } from "@zerefukun/dev-config/request-timing/tanstack-start";
 
 export default {
   fetch: timedStartHandler(timing, createStartHandler(defaultStreamHandler), getRouter),
@@ -188,7 +188,7 @@ export default {
 ```ts
 // src/start.ts
 import { createCsrfMiddleware, createMiddleware, createStart } from "@tanstack/react-start";
-import { nameServerFunction } from "@gokayo43/dev-config/request-timing/tanstack-start";
+import { nameServerFunction } from "@zerefukun/dev-config/request-timing/tanstack-start";
 
 export const startInstance = createStart(() => ({
   requestMiddleware: [
@@ -254,12 +254,12 @@ Start mounts its own CSRF check on server functions only while an app has no
 
 ## Next.js route handlers
 
-`@gokayo43/dev-config/request-timing/next` wraps each handler a `route.ts`
+`@zerefukun/dev-config/request-timing/next` wraps each handler a `route.ts`
 exports. Make the wrapper once, beside the sink, and wrap every handler with
 the pattern its file's place under `app/` gives it:
 
 ```ts
-import { requestTimingRoute } from "@gokayo43/dev-config/request-timing/next";
+import { requestTimingRoute } from "@zerefukun/dev-config/request-timing/next";
 
 export const timedRoute = requestTimingRoute(timing);
 ```
@@ -316,7 +316,7 @@ export const GET = timedRoute("/api/presets/[id]", async (request, { params }) =
 
 ## tRPC
 
-`@gokayo43/dev-config/request-timing/trpc` is one middleware the app puts first
+`@zerefukun/dev-config/request-timing/trpc` is one middleware the app puts first
 on its base procedure, and the envelope it wraps the route that serves the
 router over HTTP in. tRPC's mapping of an error to an HTTP status,
 `getHTTPStatusCodeFromError`, is handed over by the app, since this package
@@ -324,7 +324,7 @@ imports tRPC as types alone:
 
 ```ts
 import { getHTTPStatusCodeFromError } from "@trpc/server/http";
-import { requestTimingProcedures } from "@gokayo43/dev-config/request-timing/trpc";
+import { requestTimingProcedures } from "@zerefukun/dev-config/request-timing/trpc";
 
 export const procedureTiming = requestTimingProcedures(timing, getHTTPStatusCodeFromError);
 export const procedure = t.procedure.use(procedureTiming.middleware);
@@ -378,11 +378,11 @@ export { handler as GET, handler as POST };
 
 ## mysql2
 
-`@gokayo43/dev-config/request-timing/mysql2` wraps a pool `mysql2/promise`
+`@zerefukun/dev-config/request-timing/mysql2` wraps a pool `mysql2/promise`
 made. Use the answer wherever the pool was used, drizzle included:
 
 ```ts
-import { timedPool } from "@gokayo43/dev-config/request-timing/mysql2";
+import { timedPool } from "@zerefukun/dev-config/request-timing/mysql2";
 
 export const pool = timedPool(mysql.createPool(options));
 export const db = drizzle(pool, { schema, mode: "default" });
@@ -405,14 +405,14 @@ the time between them is in the rest. Everything else is the pool's own, so
 
 ## Bun.sql
 
-`@gokayo43/dev-config/request-timing/bun-sql` wraps an `SQL` client. Use the
+`@zerefukun/dev-config/request-timing/bun-sql` wraps an `SQL` client. Use the
 answer wherever the client was used, drizzle and Better Auth's drizzle adapter
 included:
 
 ```ts
 import { SQL } from "bun";
 import { drizzle } from "drizzle-orm/bun-sql";
-import { timedSql } from "@gokayo43/dev-config/request-timing/bun-sql";
+import { timedSql } from "@zerefukun/dev-config/request-timing/bun-sql";
 
 const client = timedSql(new SQL(env.DATABASE_URL));
 export const db = drizzle({ client, schema });
@@ -446,10 +446,10 @@ driver's. The helpers a call makes of an object or an array, `array`, `json`,
 
 ## Bun's Redis client
 
-`@gokayo43/dev-config/request-timing/bun-redis` wraps a `Bun.RedisClient`:
+`@zerefukun/dev-config/request-timing/bun-redis` wraps a `Bun.RedisClient`:
 
 ```ts
-import { timedBunRedis } from "@gokayo43/dev-config/request-timing/bun-redis";
+import { timedBunRedis } from "@zerefukun/dev-config/request-timing/bun-redis";
 
 export const redis = timedBunRedis(new RedisClient(url));
 ```
@@ -462,12 +462,12 @@ its listener receives are not.
 
 ## fetch
 
-`@gokayo43/dev-config/request-timing/fetch` wraps a `fetch`. An app uses the
+`@zerefukun/dev-config/request-timing/fetch` wraps a `fetch`. An app uses the
 answer at its outbound calls or installs it as the global, handing it the
 global it replaces:
 
 ```ts
-import { timedFetch } from "@gokayo43/dev-config/request-timing/fetch";
+import { timedFetch } from "@zerefukun/dev-config/request-timing/fetch";
 
 globalThis.fetch = timedFetch(globalThis.fetch);
 ```
@@ -621,11 +621,11 @@ window it had not read.
 
 ## The conformance kit
 
-`@gokayo43/dev-config/request-timing/conformance` is imported by the app's own
+`@zerefukun/dev-config/request-timing/conformance` is imported by the app's own
 `bun test` suite and run against its booted server:
 
 ```ts
-import { requestTimingConforms } from "@gokayo43/dev-config/request-timing/conformance";
+import { requestTimingConforms } from "@zerefukun/dev-config/request-timing/conformance";
 
 test("request timing", () =>
   requestTimingConforms({
@@ -661,7 +661,7 @@ A Next.js app runs the kit's route-tree check too, over its own `app`
 directory, since each route states its own pattern:
 
 ```ts
-import { requestTimingRoutesConform } from "@gokayo43/dev-config/request-timing/conformance";
+import { requestTimingRoutesConform } from "@zerefukun/dev-config/request-timing/conformance";
 
 test("every route handler is timed as its route", () =>
   requestTimingRoutesConform(join(import.meta.dir, "../app")));
@@ -696,7 +696,7 @@ An app that runs Effect runs the kit's Effect check too, handing it the
 
 ```ts
 import * as effect from "effect";
-import { requestTimingEffectConforms } from "@gokayo43/dev-config/request-timing/conformance/effect";
+import { requestTimingEffectConforms } from "@zerefukun/dev-config/request-timing/conformance/effect";
 
 test("request timing counts an Effect program's waits", () => requestTimingEffectConforms(effect));
 ```

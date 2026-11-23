@@ -18,14 +18,14 @@ import { SHIPPED_FIELDS } from "./live.ts";
  */
 const SERVES_HTTP = ["elysia", "next", "@tanstack/react-start"] as const;
 
-const KIT = "@gokayo43/dev-config/request-timing/conformance";
+const KIT = "@zerefukun/dev-config/request-timing/conformance";
 
 /**
  * The kit's check of the app's own Effect, owed beside the kit where a
  * manifest ships `effect`: request timing counts an Effect program's waits
  * right only on an Effect that resumes each fiber in its own async context.
  */
-const EFFECT_CHECK = "@gokayo43/dev-config/request-timing/conformance/effect";
+const EFFECT_CHECK = "@zerefukun/dev-config/request-timing/conformance/effect";
 
 /** The input that says the operations are not timed by request timing, and why. */
 const TIMED_OTHERWISE = "operations-timed-otherwise";

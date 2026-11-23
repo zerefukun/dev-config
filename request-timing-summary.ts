@@ -94,7 +94,7 @@ export function parseRecord(line: string): TimingRecord | undefined {
   const version = fields.get("requestTiming");
   if (version !== RECORD_VERSION) {
     throw new UnreadableRecord(
-      `a record of ${Number.isSafeInteger(version) ? `schema version ${String(version)}` : "a schema version that is not a whole number"}; this reader knows version ${RECORD_VERSION} alone, so read this log with the @gokayo43/dev-config that wrote it`,
+      `a record of ${Number.isSafeInteger(version) ? `schema version ${String(version)}` : "a schema version that is not a whole number"}; this reader knows version ${RECORD_VERSION} alone, so read this log with the @zerefukun/dev-config that wrote it`,
     );
   }
   const wrong = (field: string): never => {

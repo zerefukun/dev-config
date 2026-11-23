@@ -10,7 +10,7 @@
 * that reads them runs this file's source, so the two are different module
 * instances that agree only on `Symbol.for`'s key.
 */
-const MARK = Symbol.for("@gokayo43/dev-config/request-timing/route");
+const MARK = Symbol.for("@zerefukun/dev-config/request-timing/route");
 /** `handler`, marked as `mark` says. */
 function marked(handler, mark) {
 	Object.defineProperty(handler, MARK, { value: mark });

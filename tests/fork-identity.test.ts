@@ -36,6 +36,11 @@ const ALLOWED: readonly { file: string; line: string; reason: string }[] = [
   },
   {
     file: "README.md",
+    line: "The `zerefukun/dev-config` and `gokayo43/dev-config-db` pins move in a",
+    reason: DEV_CONFIG_DB,
+  },
+  {
+    file: "README.md",
     line: '"https://git@github.com/gokayo43/nfp-elysia-storefront-types.git", …])',
     reason: NFP_STOREFRONT_PROBE,
   },
@@ -78,6 +83,11 @@ const ALLOWED: readonly { file: string; line: string; reason: string }[] = [
     file: "tests/private-git-dependency.test.ts",
     line: '"ssh://git@github.com/gokayo43/nfp-elysia-storefront-types.git",',
     reason: NFP_STOREFRONT_PROBE,
+  },
+  {
+    file: "tests/renovate-preset.test.ts",
+    line: "// range allowed (gokayo43/dev-config#122). The rule that exempts them has to",
+    reason: UPSTREAM_TRACKER,
   },
   {
     file: "tests/repo-contract-live.test.ts",

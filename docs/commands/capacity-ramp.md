@@ -5,7 +5,7 @@ address you name, doubles the number of simultaneous users step by step, holds
 each step, and stops at the first step that breaks a bound. It tells you the
 last step held, the step that broke and which bound broke it, and per path the
 slowest, so you know where to start looking. Every repository that installs
-`@gokayo43/dev-config` has it:
+`@zerefukun/dev-config` has it:
 
 ```sh
 bun run capacity-ramp --health http://127.0.0.1:5190/api/health --path /api/things --path /login

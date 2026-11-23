@@ -72,7 +72,7 @@ async function runPlan(effect, plan, entry) {
 		},
 		now: () => 0
 	});
-	const Shared = Context.Service("@gokayo43/dev-config/request-timing/conformance/effect/Shared");
+	const Shared = Context.Service("@zerefukun/dev-config/request-timing/conformance/effect/Shared");
 	const runtime = ManagedRuntime.make(Layer.effect(Shared, Effect.all({
 		lock: Semaphore.make(1),
 		pool: Pool.make({

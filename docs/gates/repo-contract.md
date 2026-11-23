@@ -503,7 +503,7 @@ hold `elysia`, `next` and `@tanstack/react-start` as devDependencies.
 
 **The test is an import Bun's parser reads.** A live repo that owns a database
 and serves HTTP has at least one `*.test.ts` or `*.test.tsx` importing
-`@gokayo43/dev-config/request-timing/conformance`, which is where an app runs
+`@zerefukun/dev-config/request-timing/conformance`, which is where an app runs
 `requestTimingConforms` against its booted server. The file is read with
 `Bun.Transpiler`'s `scanImports`, so the specifier in a comment, a string or a
 template is no import, and nor is an `import type`, which is erased and runs
@@ -521,7 +521,7 @@ the Effect check below: the scan sees its import, not its call.
 **A repo that runs Effect also runs the kit's Effect check.** Where any
 manifest of the workspace names `effect` in `dependencies` or
 `optionalDependencies`, the fields "serves HTTP" is read from, the same scan
-asks for a test importing `@gokayo43/dev-config/request-timing/conformance/effect`,
+asks for a test importing `@zerefukun/dev-config/request-timing/conformance/effect`,
 which is where an app runs `requestTimingEffectConforms` with its own `effect`.
 An `effect` that is a devDependency alone, or that reaches the app only through
 another package, does not count. The check is owed because request timing

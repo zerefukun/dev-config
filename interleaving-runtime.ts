@@ -16,7 +16,7 @@ import effectManifest from "effect/package.json" with { type: "json" };
 const { version } = effectManifest;
 if (!version.startsWith("4.")) {
   throw new Error(
-    `@gokayo43/dev-config/interleaving runs on effect 4, and this process's effect is ${version}: Effect ${version.split(".")[0]} schedules fibers in a way simulate cannot drive`,
+    `@zerefukun/dev-config/interleaving runs on effect 4, and this process's effect is ${version}: Effect ${version.split(".")[0]} schedules fibers in a way simulate cannot drive`,
   );
 }
 

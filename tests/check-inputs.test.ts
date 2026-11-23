@@ -420,7 +420,7 @@ describe("the typecheck lane the repo contract reads", () => {
 // It proves only that each input is declared at the pin, by name, and nothing
 // about what the action does with it.
 describe("what check.yml hands this repo's actions", () => {
-  const PINNED = /^gokayo43\/dev-config\/(\.github\/actions\/[^@]+)@([0-9a-f]{40})$/u;
+  const PINNED = /^zerefukun\/dev-config\/(\.github\/actions\/[^@]+)@([0-9a-f]{40})$/u;
   const steps = [STATIC, DATABASE_JOB].flatMap((job) =>
     isList(job["steps"]) ? job["steps"].map((step) => record(step)) : [],
   );

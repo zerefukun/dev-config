@@ -62,7 +62,7 @@ beside `fast-check`. The host has to give Effect
 20.16 and 22.3: on a host where Effect cannot capture an async context, the
 first `simulate` throws, naming the runtime fact below that no longer holds. On any other major version, importing the export throws,
 naming the version it found: on Effect 3 it reads
-`@gokayo43/dev-config/interleaving runs on effect 4, and this process's effect is 3.22.0`,
+`@zerefukun/dev-config/interleaving runs on effect 4, and this process's effect is 3.22.0`,
 followed by why.
 
 ## How it works

@@ -19,7 +19,7 @@ import {
 } from "./repo-contract-fixture.ts";
 import { scratch, type Tree } from "./tree.ts";
 
-const KIT = "@gokayo43/dev-config/request-timing/conformance";
+const KIT = "@zerefukun/dev-config/request-timing/conformance";
 
 const OWED = "proves its operations are timed";
 const WAIVING_NOTHING = "operations-timed-otherwise is waiving nothing";

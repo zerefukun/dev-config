@@ -50,7 +50,7 @@ step for --hold (1s or more), and stops at the first step whose failed requests
 exceed --max-failed or whose 95th percentile of response time exceeds --max-p95.
 Writes capacity/<UTC stamp>.json and .md at the root of this repository.
 Never point it at a live deployment or at a server on live data:
-docs/commands/capacity-ramp.md in @gokayo43/dev-config says why.`;
+docs/commands/capacity-ramp.md in @zerefukun/dev-config says why.`;
 
 /** The command line cannot be read as a run: exit 2, with the usage. */
 export class WrongArguments extends Error {}

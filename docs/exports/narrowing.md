@@ -1,11 +1,11 @@
 # Narrowing helpers
 
-`@gokayo43/dev-config/narrowing` exports four calls that hand back a value the
+`@zerefukun/dev-config/narrowing` exports four calls that hand back a value the
 compiler could not prove present, or throw a message that says what was
 expected and what was found.
 
 ```ts
-import { must, nth, only, rejectionOf } from "@gokayo43/dev-config/narrowing";
+import { must, nth, only, rejectionOf } from "@zerefukun/dev-config/narrowing";
 
 expect(only(rows).sku).toBe("A");
 expect(nth(rows, 2).deletedAt).toBeUndefined();
