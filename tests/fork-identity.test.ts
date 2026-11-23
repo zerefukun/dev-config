@@ -1,7 +1,8 @@
 /**
  * What an upstream sync has to leave true of this fork, which upstream's own
- * suites cannot say: the package is zerefukun/dev-config, and check.yml's
- * action pins name one commit that holds every action they call.
+ * suites cannot say: the package is zerefukun/dev-config, no conflict marker
+ * survives the merge, and check.yml's action pins name one commit that holds
+ * every action they call.
  */
 import { describe, expect, test } from "bun:test";
 import { join } from "node:path";
@@ -33,6 +34,11 @@ const ALLOWED: readonly { file: string; line: string; reason: string }[] = [
     file: "README.md",
     line: "[dev-config#86](https://github.com/gokayo43/dev-config/issues/86) makes that a",
     reason: UPSTREAM_TRACKER,
+  },
+  {
+    file: "README.md",
+    line: "The `zerefukun/dev-config` and `gokayo43/dev-config-db` pins move in a",
+    reason: DEV_CONFIG_DB,
   },
   {
     file: "README.md",
@@ -80,6 +86,11 @@ const ALLOWED: readonly { file: string; line: string; reason: string }[] = [
     reason: NFP_STOREFRONT_PROBE,
   },
   {
+    file: "tests/renovate-preset.test.ts",
+    line: "// range allowed (gokayo43/dev-config#122). The rule that exempts them has to",
+    reason: UPSTREAM_TRACKER,
+  },
+  {
     file: "tests/repo-contract-live.test.ts",
     line: "// that wrapper passes down. This is the tree gokayo43/dev-config#65 was filed",
     reason: UPSTREAM_TRACKER,
@@ -108,6 +119,22 @@ describe("this fork after an upstream sync", () => {
         if (UPSTREAM_OWNER.test(text) && !allowed.has(`${file}\n${text.trim()}`)) {
           found.push(`${file}:${index + 1}: ${text.trim()}`);
         }
+      });
+    }
+    expect(found).toEqual([]);
+  });
+
+  // Kills a sync that resolves a conflict and leaves one of git's marker lines
+  // behind, the bare separator included, which a check for the two ends alone
+  // passes. No heading in the tree is underlined with exactly seven equals
+  // signs, so the separator is a marker wherever it stands alone on a line.
+  test("leaves no conflict marker line in any tracked file", async () => {
+    const marker = /^(?:<{7}|>{7}|\|{7})(?: .*)?$|^={7}$/;
+    const found: string[] = [];
+    for (const file of await trackedFiles(ROOT, [])) {
+      const lines = (await Bun.file(join(ROOT, file)).text()).split("\n");
+      lines.forEach((text, index) => {
+        if (marker.test(text)) found.push(`${file}:${index + 1}: ${text}`);
       });
     }
     expect(found).toEqual([]);

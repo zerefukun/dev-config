@@ -38,14 +38,18 @@ const VALIDATION = await (async (): Promise<string> => {
 })();
 
 /**
- * The inputs that step refuses by emptiness, named by the calls themselves. The
- * helper is what makes the set readable from here — a hand-written `if` block
- * per input was a set only a person could enumerate, and enumerating it here is
- * the second copy that goes stale.
+ * The inputs that step refuses by emptiness, named by the calls themselves,
+ * each with what it needs: the database job for a `needs_postgres` call, the
+ * mutation lane for a `needs_lane` one. The helpers are what make the set
+ * readable from here — a hand-written `if` block per input was a set only a
+ * person could enumerate, and enumerating it here is the second copy that goes
+ * stale.
  */
-const REFUSED_WHEN_EMPTY = [...VALIDATION.matchAll(/^\s*needs_postgres (\S+) /gmu)].map(
-  ([, name]) => name ?? "",
+const GUARDED = [...VALIDATION.matchAll(/^\s*needs_(postgres|lane) (\S+) /gmu)].map(
+  ([, helper, name]) =>
+    [name ?? "", helper === "postgres" ? "database: postgres" : "mutation-lane: true"] as const,
 );
+const REFUSED_WHEN_EMPTY = GUARDED.map(([name]) => name);
 
 /** A repository with a turbo, which is what `affected: true` needs beside it. */
 const MONOREPO: Tree = { "turbo.json": '{ "tasks": {} }\n' };
@@ -54,8 +58,6 @@ const MONOREPO: Tree = { "turbo.json": '{ "tasks": {} }\n' };
 const NOTHING_SET = {
   DATABASE: "none",
   UPGRADE_GATE: "false",
-  CAPACITY_PATH: "",
-  CAPACITY_SCRIPT: "",
   DB_GATE_EVIDENCE: "",
   ROUTE_ALLOWLIST: "",
   ROUTE_RETIRE: "",
@@ -70,6 +72,8 @@ const NOTHING_SET = {
   PROBE_TIMEOUT: "",
   MUTATION_LANE: "false",
   MUTATION_FLOOR: "",
+  MUTATION_TESTS: "",
+  MUTATION_CASE_TIMEOUT: "",
   BUILD: "false",
   BUILD_CACHE: "",
   AFFECTED: "false",
@@ -85,14 +89,14 @@ const DOCUMENTED = ((): Map<string, string> => {
   return rows;
 })();
 
-describe("the inputs that need the database job", () => {
+describe("the inputs that need another input", () => {
   // The paragraph under that table used to enumerate these by hand, and had
   // already gone stale — `fuzz-seed` was refused by the step and absent from the
   // list. The row is where the fact belongs, since that is what a caller reads
   // before passing an input, and this is what keeps the next one from being
   // missing from it.
-  test.each(REFUSED_WHEN_EMPTY)("%s says so in its own row of the README", (input) => {
-    expect(DOCUMENTED.get(input) ?? `${input}: no row`).toContain("Needs `database: postgres`");
+  test.each(GUARDED)("%s says it needs %s in its own row of the README", (input, needs) => {
+    expect(DOCUMENTED.get(input) ?? `${input}: no row`).toContain(`Needs \`${needs}\``);
   });
 });
 
@@ -122,10 +126,10 @@ describe("what a caller may pass, and what the jobs do with it", () => {
   test("an input aimed at a job that is not running is still refused", async () => {
     const { status, output } = await ran(VALIDATION, MONOREPO, {
       ...NOTHING_SET,
-      CAPACITY_PATH: "/api/things",
+      ROUTE_ALLOWLIST: "DELETE /things/:id -- it deletes what it names",
       MUTATION_FLOOR: "0.7",
     });
-    expect(output).toContain("::error::capacity-path needs database: postgres");
+    expect(output).toContain("::error::route-allowlist needs database: postgres");
     expect(output).toContain("::error::mutation-floor needs mutation-lane: true");
     expect(status).not.toBe(0);
   });
@@ -149,8 +153,9 @@ describe("what a caller may pass, and what the jobs do with it", () => {
   // listed here: a list is a second statement of the set, and the copy that
   // goes stale is the one nobody runs. Another input added to that guard is
   // covered by this the moment it is written.
-  test("the suite found the inputs the guard refuses by emptiness", () => {
-    expect(REFUSED_WHEN_EMPTY.length).toBeGreaterThan(0);
+  test("the suite found the inputs both guards refuse by emptiness", () => {
+    expect(GUARDED.map(([, needs]) => needs)).toContain("database: postgres");
+    expect(GUARDED.map(([, needs]) => needs)).toContain("mutation-lane: true");
   });
 
   // `needs_postgres` reads "the caller passed this" as "the value is non-empty",
@@ -169,13 +174,31 @@ describe("what a caller may pass, and what the jobs do with it", () => {
   // arguments, so a call that transposes them, or names an input the step does
   // not read, refuses nothing while reading as wired — and the input added last
   // is the one nobody has a golden for.
-  test.each(REFUSED_WHEN_EMPTY)("%s is refused where that job is not running", async (name) => {
+  test.each(GUARDED)("%s is refused without %s", async (name, needs) => {
     const { status, output } = await ran(VALIDATION, MONOREPO, {
       ...NOTHING_SET,
       [name.toUpperCase().replaceAll("-", "_")]: "what the caller meant by it",
     });
-    expect(output).toContain(`::error::${name} needs database: postgres`);
+    expect(output).toContain(`::error::${name} needs ${needs}`);
     expect(status).not.toBe(0);
+  });
+
+  // ...and its other half: a guard that refused the input whatever stood beside
+  // it would pass the row above and refuse every caller that meant it. Two of
+  // them ride on a second input as well, which the step checks in a rule of its
+  // own after the guards.
+  const ALSO_RIDES_ON: Record<string, Record<string, string>> = {
+    "semantic-fixtures": { UPGRADE_GATE: "true" },
+    "probe-timeout": { PROBE_COMMAND: "bun run scripts/probe.ts" },
+  };
+  test.each(GUARDED)("%s beside %s passes", async (name, needs) => {
+    const { status } = await ran(VALIDATION, MONOREPO, {
+      ...NOTHING_SET,
+      ...(needs === "database: postgres" ? { DATABASE: "postgres" } : { MUTATION_LANE: "true" }),
+      ...ALSO_RIDES_ON[name],
+      [name.toUpperCase().replaceAll("-", "_")]: "what the caller meant by it",
+    });
+    expect(status).toBe(0);
   });
 
   // The one input in the set graded on its value rather than on its emptiness,
@@ -232,6 +255,25 @@ describe("what a caller may pass, and what the jobs do with it", () => {
     ).toMatchObject({ status: 0 });
   });
 
+  // Wrong implementation: no guard, so a caller naming the tests that grade its
+  // domain and never turning the lane on is green with nothing mutated.
+  test("named tests with no mutation lane to run them are refused, and pass beside one", async () => {
+    const tests = "src/domain/**/*.test.ts";
+    const without = await ran(VALIDATION, MONOREPO, { ...NOTHING_SET, MUTATION_TESTS: tests });
+    expect(without.output).toContain(
+      "::error::mutation-tests needs mutation-lane: true — the tests it names are run by that step",
+    );
+    expect(without.status).not.toBe(0);
+
+    expect(
+      await ran(VALIDATION, MONOREPO, {
+        ...NOTHING_SET,
+        MUTATION_LANE: "true",
+        MUTATION_TESTS: tests,
+      }),
+    ).toMatchObject({ status: 0 });
+  });
+
   test("a bound with no command under it is refused", async () => {
     const { status, output } = await ran(VALIDATION, MONOREPO, {
       ...NOTHING_SET,
@@ -281,10 +323,10 @@ describe("what a caller may pass, and what the jobs do with it", () => {
     const { status, output } = await ran(VALIDATION, MONOREPO, {
       ...NOTHING_SET,
       DATABASE: "external",
-      CAPACITY_PATH: "/api/things",
+      ROUTE_ALLOWLIST: "DELETE /things/:id -- it deletes what it names",
       UPGRADE_GATE: "true",
     });
-    expect(output).toContain("::error::capacity-path needs database: postgres");
+    expect(output).toContain("::error::route-allowlist needs database: postgres");
     expect(output).toContain("::error::upgrade-gate: true needs database: postgres");
     expect(status).not.toBe(0);
   });
@@ -367,4 +409,54 @@ describe("the typecheck lane the repo contract reads", () => {
       commands.some((line) => line === TYPECHECK_LANE || line.startsWith(`${TYPECHECK_LANE} `)),
     ).toBe(true);
   });
+});
+
+// A release tags the commit that ships an action's new input, then points
+// check.yml's pin at it. Between the two, check.yml can hand a pinned action an
+// input that commit does not declare, which GitHub passes over with a warning
+// and the action never reads. Every key a step hands one of this repo's
+// actions is read against the action.yml at the commit its pin names.
+//
+// It proves only that each input is declared at the pin, by name, and nothing
+// about what the action does with it.
+describe("what check.yml hands this repo's actions", () => {
+  const PINNED = /^zerefukun\/dev-config\/(\.github\/actions\/[^@]+)@([0-9a-f]{40})$/u;
+  const steps = [STATIC, DATABASE_JOB].flatMap((job) =>
+    isList(job["steps"]) ? job["steps"].map((step) => record(step)) : [],
+  );
+  const handed = steps.flatMap((step) => {
+    const pin = PINNED.exec(textAt(step, "uses"));
+    const given = step["with"];
+    return pin === null || given === undefined
+      ? []
+      : [{ action: pin[1] ?? "", commit: pin[2] ?? "", keys: Object.keys(record(given)) }];
+  });
+
+  test("names a step of each job, so the check below reads something", () => {
+    const actions = handed.map(({ action }) => action);
+    expect(actions).toContain(".github/actions/mutation-lane");
+    expect(actions).toContain(".github/actions/db-gate");
+  });
+
+  test.each(handed.map((step) => [`${step.action}@${step.commit.slice(0, 7)}`, step] as const))(
+    "every input %s is handed is one that commit declares",
+    (_, { action, commit, keys }) => {
+      const git = (...args: string[]) => Bun.spawnSync(["git", ...args], { cwd: import.meta.dir });
+      if (git("cat-file", "-e", `${commit}^{commit}`).exitCode !== 0) {
+        throw new Error(
+          `${commit} is not in this clone's object store, so ${action}/action.yml at the pin cannot be read: fetch it (\`git fetch origin ${commit}\`, or clone with fetch-depth: 0)`,
+        );
+      }
+      const shown = git("show", `${commit}:${action}/action.yml`);
+      if (shown.exitCode !== 0) {
+        throw new Error(
+          `${commit} holds no ${action}/action.yml: the pin names a commit from before that action, or a path the action never had`,
+        );
+      }
+      const declared = Object.keys(
+        record(record(Bun.YAML.parse(shown.stdout.toString()))["inputs"]),
+      );
+      expect(keys.filter((key) => !declared.includes(key))).toEqual([]);
+    },
+  );
 });

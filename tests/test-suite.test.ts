@@ -1,10 +1,10 @@
-import { describe, expect, setDefaultTimeout, test } from "bun:test";
+import { describe, expect, test } from "bun:test";
 import { chmod, mkdir, stat } from "node:fs/promises";
 import { dirname, join } from "node:path";
 
 import { record } from "../.github/actions/_lib/gate.ts";
 import { BUNS } from "./buns.ts";
-import { materialise, type Tree } from "./tree.ts";
+import { materialise, SPAWNED_CASE_MS, type Tree } from "./tree.ts";
 
 /**
  * The gate is a shell script in a composite action, so the suite runs that
@@ -12,14 +12,6 @@ import { materialise, type Tree } from "./tree.ts";
  * grade is whether the namespace the shipped YAML names actually holds, which
  * is the whole of what this gate claims.
  */
-// Every case here is a process tree: bash, sudo, the ci-seal helper and
-// a `bun test` inside all of it. With the machine to itself the whole suite is under
-// three seconds, and inside a full run — behind the browser, the mutation lane
-// and three suites that drive a real Postgres — a single spawn has been seen to
-// pass five, which the default reports as a fault in the seal. The same 30s the
-// mutation lane's suite gives a spawn, for the reason it gives: what a shared
-// machine does to a spawn is not a signal about the code under test.
-setDefaultTimeout(30_000);
 
 const ACTION = new URL("../.github/actions/test-suite/action.yml", import.meta.url).pathname;
 const SEAL = join(dirname(ACTION), "ci-seal.sh");
@@ -56,27 +48,31 @@ interface Run {
 async function ownerOf(path: string): Promise<number | undefined> {
   try {
     return (await stat(path)).uid;
-  } catch {
-    return undefined;
+  } catch (error) {
+    if (error instanceof Error && "code" in error && error.code === "ENOENT") return undefined;
+    throw error;
   }
 }
+
+const PATH = process.env["PATH"] ?? "";
+
+/** How the step's refusal to seal begins. */
+const CANNOT_SEAL = "::error::the suite is run sealed in a network namespace";
 
 /**
  * The step against a suite of its own, with the runner's temp directory pointed
  * at the fixture — the junit report the step reads is per-run, and two cases
- * sharing one would grade each other's.
+ * sharing one would grade each other's. The step calls `bun` by name, so which
+ * one it gets is a fact about `path`.
  */
-async function ran(
+async function stepped(
   tree: Tree,
-  network = "",
-  bun = "",
-  nightly = "false",
-  around: (root: string) => Promise<Record<string, string>> = () => Promise.resolve({}),
+  network: string,
+  path: string,
+  nightly: string,
+  around: (root: string) => Promise<Record<string, string>>,
 ): Promise<Run> {
   const root = await materialise(tree);
-  // The step calls `bun` by name, so which one it gets is a fact about PATH —
-  // which is how a case runs the shipped shell under a bun other than this one.
-  const path = bun === "" ? process.env["PATH"] : `${dirname(bun)}:${process.env["PATH"] ?? ""}`;
   const proc = Bun.spawn(["bash", "-c", STEP], {
     cwd: root,
     env: {
@@ -105,13 +101,38 @@ async function ran(
   };
 }
 
+/**
+ * The step on a machine that can seal a run, which every case but the one
+ * about the refusal needs. A refusal throws with the step's own words: most
+ * cases here grade a run that fails, and would pass over one that never
+ * started.
+ */
+async function ran(
+  tree: Tree,
+  network = "",
+  path = PATH,
+  nightly = "false",
+  around: (root: string) => Promise<Record<string, string>> = () => Promise.resolve({}),
+): Promise<Run> {
+  const run = await stepped(tree, network, path, nightly, around);
+  if (run.output.includes(CANNOT_SEAL)) {
+    throw new Error(`this machine cannot seal a run, which this suite needs:\n${run.output}`);
+  }
+  return run;
+}
+
+/**
+ * A suite that calls a live host. Its case names its limit: a call cut short
+ * by a limit fails the suite as a sealed one would, and an unsealed step would
+ * pass for sealed.
+ */
 const REACHES: Tree = {
   "reaches.test.ts": `import { expect, test } from "bun:test";
 
 test("reaches a live host", async () => {
   const response = await fetch("https://example.com");
   expect(response.status).toBe(200);
-});
+}, ${SPAWNED_CASE_MS});
 `,
 };
 
@@ -149,9 +170,8 @@ async function running(marker: string): Promise<number> {
  * Polls until the count settles where the case needs it, or gives up and
  * returns what it last saw so the assertion reads the real number.
  *
- * Real time on purpose, and the one place in this repo that has to spend it:
- * what is being measured is a signal crossing three processes, which no clock
- * this suite could inject has any part in.
+ * Real time on purpose: what is being measured is a signal crossing several
+ * processes, which no clock this suite could inject has any part in.
  */
 async function settles(marker: string, wanted: (count: number) => boolean): Promise<number> {
   let count = await running(marker);
@@ -333,12 +353,6 @@ test("unreached", () => {
   };
 }
 
-// The step is what applies a repo's declared floor — the argument is in
-// docs/gates/test-suite.md — so the wrong implementation is the one that runs
-// the suite without --coverage, which the under-covered tree below passes with
-// every test green. Graded through the report the run wrote rather than the
-// console: what makes the first case the coverage floor and not some other
-// failure is that the run's own record says nothing in it failed.
 /**
  * A `sudo` of the suite's own, first on PATH, standing in for sudo and the
  * ci-seal helper: the call the step makes to it is graded here, on any
@@ -399,7 +413,7 @@ describe("the call the step makes to the seal", () => {
   test("is the helper, handed this PATH and TMPDIR, and the suite sees that TMPDIR", async () => {
     let root = "";
     let handed: Record<string, string> = {};
-    const { status, output } = await ran(READS_TMPDIR, "", "", "false", async (at) => {
+    const { status, output } = await ran(READS_TMPDIR, "", PATH, "false", async (at) => {
       root = at;
       handed = await standIn()(at);
       return handed;
@@ -422,7 +436,7 @@ describe("the call the step makes to the seal", () => {
 
   test("hands an unset or empty TMPDIR as /tmp, which is what a process reads it as", async () => {
     let root = "";
-    const { status } = await ran(READS_TMPDIR, "", "", "false", async (at) => {
+    const { status } = await ran(READS_TMPDIR, "", PATH, "false", async (at) => {
       root = at;
       const handed = await standIn()(at);
       return { PATH: handed["PATH"] ?? "", TMPDIR: "" };
@@ -433,7 +447,7 @@ describe("the call the step makes to the seal", () => {
   });
 
   test("fails the step by name when the helper cannot take the namespace", async () => {
-    const { status, output } = await ran(READS_TMPDIR, "", "", "false", standIn(true));
+    const { status, output } = await stepped(READS_TMPDIR, "", PATH, "false", standIn(true));
     expect(output).toContain("the ci-seal helper could not take one");
     expect(status).not.toBe(0);
   });
@@ -458,7 +472,7 @@ test("reads its budget", () => {
   // dropped is a nightly that searched exactly as far as an ordinary run and
   // said it had searched fifty times further.
   test("reaches the suite through the seal", async () => {
-    const { status, output } = await ran(BUDGETED, "", "", "true");
+    const { status, output } = await ran(BUDGETED, "", PATH, "true");
     expect(status).toBe(0);
     expect(output).toContain("factor=50");
     expect(output).toContain("limit=120000");
@@ -475,12 +489,146 @@ test("reads its budget", () => {
   // A spelling nobody defined would otherwise read as "not nightly", and the
   // long search would quietly never have happened.
   test("a spelling that is neither true nor false is refused", async () => {
-    const { status, output } = await ran(CLEAN, "", "", "yes");
+    const { status, output } = await ran(CLEAN, "", PATH, "yes");
     expect(status).not.toBe(0);
     expect(output).toContain("it takes true or false");
   });
 });
 
+/**
+ * How long a test outlasts bun's own five seconds by, in ms: what a correct
+ * test takes on a runner host whose share of a core is 3%. A sleep stands in
+ * for the starved CPU, because what the step decides is the wall time a test
+ * may take, whatever it was spent on.
+ */
+const PAST_BUNS_DEFAULT = 5_500;
+
+/** A limit a repo states for itself, in ms, and what a test that outlasts it sleeps. */
+const STATED = 300;
+const PAST_STATED = 2 * STATED;
+
+/** A suite whose command is `bun test` itself, with its one case. */
+function plain(name: string, prelude: string, body: string, limit = ""): Tree {
+  return {
+    [`${name}.test.ts`]: `import { beforeAll, expect, setDefaultTimeout, test } from "bun:test";
+
+${prelude}
+
+test("${name}", async () => {
+  ${body}
+  expect(1).toBe(1);
+}${limit});
+`,
+  };
+}
+
+/**
+ * A suite that prints every --timeout on the command line of the `bun test`
+ * that ran it, which is what the step gave it once its script had been run.
+ */
+const LIMITS: Tree = {
+  "limits.test.ts": `import { expect, test } from "bun:test";
+
+test("reads its limits", async () => {
+  const argv = (await Bun.file("/proc/self/cmdline").text()).split("\\0");
+  const timeouts = argv.flatMap((arg, at) => (arg === "--timeout" ? [argv[at + 1]] : []));
+  console.log(\`timeouts=\${JSON.stringify(timeouts)}\`);
+  expect(1).toBe(1);
+});
+`,
+};
+
+/** A manifest whose `test` script is `bun test` stating its own limit. */
+const STATING = JSON.stringify({
+  name: "states",
+  scripts: { test: `bun test --timeout ${STATED}` },
+});
+
+/**
+ * `LIMITS` behind a suite command its repo designed, which hands the
+ * arguments the step gave it to the `bun test` it ends in, as the gate requires.
+ */
+const WRAPPED: Tree = {
+  ...LIMITS,
+  "package.json": JSON.stringify({ name: "wrapped", scripts: { test: "bun wrapper.ts" } }),
+  "wrapper.ts": `const suite = Bun.spawn([process.execPath, "test", ...process.argv.slice(2)], {
+  stdio: ["inherit", "inherit", "inherit"],
+});
+process.exit(await suite.exited);
+`,
+};
+
+describe("the limit a test is given", () => {
+  // Both shapes whose command is `bun test` itself, no script and a script of
+  // exactly that, one per fixture, side by side so the suite waits out bun's
+  // five seconds once. A step that appended nothing fails both at five.
+  test("a test and a hook that outlast bun's five seconds pass", async () => {
+    const [hook, slow] = await Promise.all([
+      ran(plain("hook", `beforeAll(() => Bun.sleep(${PAST_BUNS_DEFAULT}));`, "")),
+      ran({
+        ...plain("slow", "", `await Bun.sleep(${PAST_BUNS_DEFAULT});`),
+        "package.json": JSON.stringify({ name: "plain", scripts: { test: "bun test" } }),
+      }),
+    ]);
+    expect(hook).toMatchObject({ status: 0 });
+    expect(slow).toMatchObject({ status: 0 });
+  });
+
+  // One row per place a repo can state its own limit. bun keeps the last
+  // --timeout it is given, so a step appending its minute to every script
+  // passes the first row; the other two are bun's precedence over the flag,
+  // which is what the gate's page tells a repo to rely on.
+  test.each([
+    [
+      "its test script",
+      {
+        ...plain("stated", "", `await Bun.sleep(${PAST_STATED});`),
+        "package.json": STATING,
+      },
+    ],
+    [
+      "a file's setDefaultTimeout",
+      plain("stated", `setDefaultTimeout(${STATED});`, `await Bun.sleep(${PAST_STATED});`),
+    ],
+    ["the test itself", plain("stated", "", `await Bun.sleep(${PAST_STATED});`, `, ${STATED}`)],
+  ])("a limit stated in %s is the one its test fails at", async (_place, tree) => {
+    const { status, output } = await ran(tree);
+    expect(output).toContain(`timed out after ${STATED}ms`);
+    expect(status).not.toBe(0);
+  });
+
+  // A designed suite command is left alone off the nightly, and the nightly's
+  // ten minutes reach every shape, last on the line so that bun keeps them over
+  // a limit the script states. A step that judged the shape on the nightly too
+  // would drop them from the last two rows.
+  test.each([
+    ["off the nightly, a script that is not bun test is given none", WRAPPED, "false", []],
+    ["on the nightly, no test script is given ten minutes", LIMITS, "true", ["600000"]],
+    [
+      "on the nightly, a script stating its own limit is given ten minutes after it",
+      { ...LIMITS, "package.json": STATING },
+      "true",
+      [`${STATED}`, "600000"],
+    ],
+    [
+      "on the nightly, a script that is not bun test is given ten minutes",
+      WRAPPED,
+      "true",
+      ["600000"],
+    ],
+  ])("%s", async (_shape, tree, nightly, timeouts) => {
+    const { status, output } = await ran(tree, "", PATH, nightly);
+    expect(output).toContain(`timeouts=${JSON.stringify(timeouts)}`);
+    expect(status).toBe(0);
+  });
+});
+
+// The step is what applies a repo's declared floor — the argument is in
+// docs/gates/test-suite.md — so the wrong implementation is the one that runs
+// the suite without --coverage, which the under-covered tree below passes with
+// every test green. Graded through the report the run wrote rather than the
+// console: what makes the first case the coverage floor and not some other
+// failure is that the run's own record says nothing in it failed.
 describe("the coverage floor the repo declares", () => {
   test("a suite under the floor fails, with nothing failing", async () => {
     const { status, report } = await ran(floored(false));
@@ -589,7 +737,7 @@ describe("the suite the repo declares", () => {
   // namespace apiece. The declared-script path is graded above under this
   // process's own bun, and nothing about it was ever version-dependent.
   test.each(BUNS)("under %s a tree with no manifest still runs bun test itself", async (bun) => {
-    expect(await ran(CLEAN, "", bun)).toMatchObject({ status: 0 });
+    expect(await ran(CLEAN, "", `${dirname(bun)}:${PATH}`)).toMatchObject({ status: 0 });
   });
 });
 

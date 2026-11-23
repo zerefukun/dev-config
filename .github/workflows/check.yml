@@ -49,8 +49,8 @@ on:
       database:
         description: >-
           Which database gates run. `postgres` replays the migrations onto an empty
-          Postgres, boots the app against the result, and ramps it — every route it
-          serves, or an allowlisted reason why not. `external` says a workflow wrapping
+          Postgres, boots the app against the result, holds its route table to the
+          base ref's and fuzzes every route it serves. `external` says a workflow wrapping
           this one runs the database gates in that job's place, which is what an
           extension of this workflow passes when it replaces them with its own dialect's
           — the repo still owes a db:migrate, and the inputs aimed at the job
@@ -91,6 +91,23 @@ on:
           and enforces nothing. Set it with mutation-lane or not at all.
         type: string
         default: ""
+      mutation-tests:
+        description: >-
+          The test files that grade the pure domain, as glob patterns relative to the
+          working directory, one per line; the mutation lane runs exactly the files they
+          name. Empty lets the runner walk the project for every test file. Set it with
+          mutation-lane or not at all.
+        type: string
+        default: ""
+      mutation-case-timeout:
+        description: >-
+          How long one test case may run in the mutation lane before bun fails it, in
+          milliseconds from 1 to 540000, the lane's whole run. Stryker's deadline for a
+          mutant is 1.5 × what its tests took unmutated, plus this, so a timeout there
+          means a mutant that hangs. Empty is 60000. Set it with mutation-lane or not at
+          all.
+        type: string
+        default: ""
       duplicate-code:
         description: >-
           Fail on a run of twelve or more lines, comments and whitespace aside, that this
@@ -116,6 +133,18 @@ on:
           a repo whose box already dumps this database can only satisfy the rule as written
           by committing a second dump on a second schedule, which is two answers to when
           the data is safe.
+        type: string
+        default: ""
+      operations-timed-otherwise:
+        description: >-
+          Why a live repo that serves HTTP and owns a database is not timed by request
+          timing: how its operations are timed instead, or that it serves nothing a
+          connector covers, and what it serves. Empty, which is every repo that uses it,
+          asks for a test importing @zerefukun/dev-config/request-timing/conformance, and
+          where a manifest ships effect, one importing
+          @zerefukun/dev-config/request-timing/conformance/effect. The reason is the waiver of
+          both, and it is refused on a repo that does not owe the test or that has a test
+          importing either.
         type: string
         default: ""
       stack-allowlist:
@@ -159,7 +188,7 @@ on:
       probe-command:
         description: >-
           A command of the repo's own, run against the booted app after it answers its
-          health route and before the ramp, as shell code with the app's URL in
+          health route, as shell code with the app's URL in
           HEALTH_URL. Its stdout is the verdict: every line it writes there is one
           problem, whatever it exits with.
         type: string
@@ -169,16 +198,6 @@ on:
           How many seconds probe-command gets before it is killed. Empty takes the
           bound db-gate declares, which is where the number and the argument for it
           live. Set it with `probe-command` or not at all.
-        type: string
-        default: ""
-      capacity-script:
-        description: A k6 script of the repo's own. Empty runs the ramp shipped with db-gate.
-        type: string
-        default: ""
-      capacity-path:
-        description: >-
-          Paths to ramp alongside the health route, e.g. /api/things — one per line,
-          since the route floor asks for every route the app serves.
         type: string
         default: ""
       db-gate-evidence:
@@ -212,9 +231,10 @@ on:
         default: ""
       route-allowlist:
         description: >-
-          Routes the capacity ramp cannot cover, as `METHOD /path -- why` entries,
-          one per line. The reason is part of the entry, and an entry without one
-          is refused — the price a lint directive already pays.
+          Routes the fuzzer sends no generated request to, as `METHOD /path -- why`
+          entries, one per line. The reason is part of the entry, and an entry
+          without one, or naming a route the app does not serve, is refused — the
+          price a lint directive already pays.
         type: string
         default: ""
       route-retire:
@@ -314,16 +334,16 @@ jobs:
       # not have asked to run, so passing one is a request that would otherwise
       # be ignored in silence — and a gate nobody notices is off is the worst
       # kind. Most belong to the database job: a repo that has written out the
-      # routes it wants ramped, or the reasons a route cannot be, has said
-      # plainly that it expects a ramp. Two of those are also aimed at each
+      # reasons a route is not to be fuzzed has said plainly that it expects
+      # the job to run. Two of those are also aimed at each
       # other — `semantic-fixtures` needs the replay `upgrade-gate` adds, and
       # `probe-timeout` bounds a `probe-command` — so each is asked twice,
-      # once about the job and once about the input it rides on. Then the mutation
-      # lane's floor, which bounds a score only that step measures, the build
-      # cache, which is kept around a build only `build: true` runs, and
-      # `affected`, which needs a turbo to hand the flag to — the one condition
-      # here that is a fact about the tree rather than about the inputs, which
-      # is why the step runs after the checkout.
+      # once about the job and once about the input it rides on. Then the
+      # mutation lane's floor and tests, which bound a score and name a run only
+      # that step makes, the build cache, which is kept around a build only
+      # `build: true` runs, and `affected`, which needs a turbo to hand the flag
+      # to — the one condition here that is a fact about the tree rather than
+      # about the inputs, which is why the step runs after the checkout.
       #
       # The step has no `if:`. It had one, restating every condition its body
       # tests, and two statements of one rule is two places for it to be wrong:
@@ -335,8 +355,6 @@ jobs:
       - env:
           DATABASE: ${{ inputs.database }}
           UPGRADE_GATE: ${{ inputs.upgrade-gate }}
-          CAPACITY_PATH: ${{ inputs.capacity-path }}
-          CAPACITY_SCRIPT: ${{ inputs.capacity-script }}
           DB_GATE_EVIDENCE: ${{ inputs['db-gate-evidence'] }}
           ROUTE_ALLOWLIST: ${{ inputs.route-allowlist }}
           FUZZ_SEED: ${{ inputs['fuzz-seed'] }}
@@ -351,6 +369,8 @@ jobs:
           PROBE_TIMEOUT: ${{ inputs['probe-timeout'] }}
           MUTATION_LANE: ${{ inputs['mutation-lane'] }}
           MUTATION_FLOOR: ${{ inputs['mutation-floor'] }}
+          MUTATION_TESTS: ${{ inputs['mutation-tests'] }}
+          MUTATION_CASE_TIMEOUT: ${{ inputs['mutation-case-timeout'] }}
           BUILD: ${{ inputs.build }}
           BUILD_CACHE: ${{ inputs['build-cache'] }}
           AFFECTED: ${{ inputs.affected }}
@@ -391,7 +411,7 @@ jobs:
           esac
           # Re-asked here, because any one of the conditions above can be what
           # selected this step: without it a repo running the database job and no
-          # mutation lane would be told its ramp inputs need a job it already
+          # mutation lane would be told its database inputs need a job it already
           # asked for.
           #
           # `external` refuses these exactly as `none` does, and for the reason
@@ -405,10 +425,8 @@ jobs:
             if [ "$UPGRADE_GATE" = true ]; then
               refuse "upgrade-gate: true needs database: postgres — the upgrade path is replayed by the database job"
             fi
-            needs_postgres capacity-path "$CAPACITY_PATH" "the ramp runs against the app the database job boots"
-            needs_postgres capacity-script "$CAPACITY_SCRIPT" "the ramp runs against the app the database job boots"
             needs_postgres db-gate-evidence "$DB_GATE_EVIDENCE" "it names the artifact the database job uploads"
-            needs_postgres route-allowlist "$ROUTE_ALLOWLIST" "the route floor is measured across the database job's ramp"
+            needs_postgres route-allowlist "$ROUTE_ALLOWLIST" "the fuzzer it exempts routes from runs against the app the database job boots"
             needs_postgres fuzz-seed "$FUZZ_SEED" "the fuzzer generates from it against the app the database job boots"
             needs_postgres route-retire "$ROUTE_RETIRE" "the routes the base ref served are held against the app the database job boots"
             needs_postgres timestamp-allowlist "$TIMESTAMP_ALLOWLIST" "the column types are read from the database that job migrates"
@@ -430,9 +448,17 @@ jobs:
           if [ -z "$PROBE_COMMAND" ] && [ -n "$PROBE_TIMEOUT" ]; then
             refuse "probe-timeout needs probe-command — it bounds that command, and on its own it bounds nothing"
           fi
-          if [ "$MUTATION_LANE" != true ] && [ -n "$MUTATION_FLOOR" ]; then
-            refuse "mutation-floor needs mutation-lane: true — the score it bounds is measured by that step"
-          fi
+          # An input aimed at the mutation lane, refused when that step is not
+          # one this run makes: its name, the value that says a caller set it,
+          # and why it needs the step.
+          needs_lane() {
+            if [ "$MUTATION_LANE" != true ] && [ -n "$2" ]; then
+              refuse "$1 needs mutation-lane: true — $3"
+            fi
+          }
+          needs_lane mutation-floor "$MUTATION_FLOOR" "the score it bounds is measured by that step"
+          needs_lane mutation-tests "$MUTATION_TESTS" "the tests it names are run by that step"
+          needs_lane mutation-case-timeout "$MUTATION_CASE_TIMEOUT" "the cases it bounds are run by that step"
           if [ "$BUILD" != true ] && [ -n "$BUILD_CACHE" ]; then
             refuse "build-cache needs build: true; the paths it names are kept around the build that input runs"
           fi
@@ -441,7 +467,7 @@ jobs:
           fi
           exit "$wrong"
 
-      - uses: zerefukun/dev-config/.github/actions/secret-scan@6dfc8554eb461d79a0bca800e8bec6a4d1dd030f # v0.76.2
+      - uses: zerefukun/dev-config/.github/actions/secret-scan@b03e26176ddc695c032c60c9f4be57d057ac55a3 # v0.79.2
 
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
 
@@ -456,32 +482,33 @@ jobs:
       # The declarative gates read the tree as committed, so they run before the
       # install: a repo that has drifted out of the contract says so in seconds
       # rather than after a full dependency resolution.
-      - uses: zerefukun/dev-config/.github/actions/repo-contract@6dfc8554eb461d79a0bca800e8bec6a4d1dd030f # v0.76.2
+      - uses: zerefukun/dev-config/.github/actions/repo-contract@b03e26176ddc695c032c60c9f4be57d057ac55a3 # v0.79.2
         with:
           database: ${{ inputs.database }}
           exemptions: ${{ inputs.contract-exemptions }}
           data-jobs-external: ${{ inputs['data-jobs-external'] }}
+          operations-timed-otherwise: ${{ inputs['operations-timed-otherwise'] }}
 
-      - uses: zerefukun/dev-config/.github/actions/stack-gate@6dfc8554eb461d79a0bca800e8bec6a4d1dd030f # v0.76.2
+      - uses: zerefukun/dev-config/.github/actions/stack-gate@b03e26176ddc695c032c60c9f4be57d057ac55a3 # v0.79.2
         with:
           stack-allowlist: ${{ inputs.stack-allowlist }}
 
       # The caller's own workflows were schema-checked and pin-checked by
       # nothing until this ran here. Needs the Bun that setup-bun installed.
-      - uses: zerefukun/dev-config/.github/actions/lint-workflows@6dfc8554eb461d79a0bca800e8bec6a4d1dd030f # v0.76.2
+      - uses: zerefukun/dev-config/.github/actions/lint-workflows@b03e26176ddc695c032c60c9f4be57d057ac55a3 # v0.79.2
 
-      - uses: zerefukun/dev-config/.github/actions/suppression-hygiene@6dfc8554eb461d79a0bca800e8bec6a4d1dd030f # v0.76.2
+      - uses: zerefukun/dev-config/.github/actions/suppression-hygiene@b03e26176ddc695c032c60c9f4be57d057ac55a3 # v0.79.2
 
       - if: inputs['duplicate-code']
-        uses: zerefukun/dev-config/.github/actions/duplicate-code@6dfc8554eb461d79a0bca800e8bec6a4d1dd030f # v0.76.2
+        uses: zerefukun/dev-config/.github/actions/duplicate-code@b03e26176ddc695c032c60c9f4be57d057ac55a3 # v0.79.2
 
       # docs/gates/shell-scripts.md — nothing else here reads a repo's own shell.
-      - uses: zerefukun/dev-config/.github/actions/shell-scripts@6dfc8554eb461d79a0bca800e8bec6a4d1dd030f # v0.76.2
+      - uses: zerefukun/dev-config/.github/actions/shell-scripts@b03e26176ddc695c032c60c9f4be57d057ac55a3 # v0.79.2
 
       - if: inputs.compose
-        uses: zerefukun/dev-config/.github/actions/compose-lint@6dfc8554eb461d79a0bca800e8bec6a4d1dd030f # v0.76.2
+        uses: zerefukun/dev-config/.github/actions/compose-lint@b03e26176ddc695c032c60c9f4be57d057ac55a3 # v0.79.2
 
-      - uses: zerefukun/dev-config/.github/actions/install@6dfc8554eb461d79a0bca800e8bec6a4d1dd030f # v0.76.2
+      - uses: zerefukun/dev-config/.github/actions/install@b03e26176ddc695c032c60c9f4be57d057ac55a3 # v0.79.2
         with:
           git-ssh-key: ${{ secrets['git-ssh-key'] }}
 
@@ -491,7 +518,7 @@ jobs:
       # packages alone leaves lint, knip and the root typecheck reading files
       # nothing wrote this run.
       - if: inputs.build
-        uses: zerefukun/dev-config/.github/actions/build@6dfc8554eb461d79a0bca800e8bec6a4d1dd030f # v0.76.2
+        uses: zerefukun/dev-config/.github/actions/build@b03e26176ddc695c032c60c9f4be57d057ac55a3 # v0.79.2
         with:
           cache: ${{ inputs['build-cache'] }}
 
@@ -512,7 +539,7 @@ jobs:
           bun run typecheck ${TURBO_AFFECTED:-}
       - run: bun run knip
 
-      - uses: zerefukun/dev-config/.github/actions/test-suite@6dfc8554eb461d79a0bca800e8bec6a4d1dd030f # v0.76.2
+      - uses: zerefukun/dev-config/.github/actions/test-suite@b03e26176ddc695c032c60c9f4be57d057ac55a3 # v0.79.2
         with:
           nightly: ${{ inputs.nightly }}
           test-network: ${{ inputs['test-network'] }}
@@ -524,17 +551,22 @@ jobs:
       #
       # The bound is here rather than inside the action because a composite
       # action's own steps take no timeout-minutes; this is the only place a
-      # caller can put one. Ten, against a campaign whose cost is a test run per
-      # mutant: the fixture suite's runs are a couple of seconds for ten mutants
-      # on a file, so ten minutes is thousands of mutants — far more than a pull
-      # request's own domain lines produce, and short enough that a runner stuck
-      # on one mutant does not eat the job's fifteen and take the evidence of
-      # every step before it down with it.
+      # caller can put one. Ten, short enough that a lane stuck on one mutant
+      # does not eat the job's fifteen and take the evidence of every step
+      # before it down with it. The lane ends its own run at nine
+      # (`RUN_DEADLINE_MS`) and says how far it got, so these ten are what
+      # catches the lane itself hanging. A mutant costs a test run, and one
+      # that hangs costs a whole case limit, a minute by default. A run
+      # reaches the lane's nine with mutants that hang, and the refusal then
+      # points at `mutation-case-timeout`, or with more mutants than nine
+      # minutes hold, and it then points at changing fewer domain files.
       - if: inputs['mutation-lane']
         timeout-minutes: 10
-        uses: zerefukun/dev-config/.github/actions/mutation-lane@6dfc8554eb461d79a0bca800e8bec6a4d1dd030f # v0.76.2
+        uses: zerefukun/dev-config/.github/actions/mutation-lane@b03e26176ddc695c032c60c9f4be57d057ac55a3 # v0.79.2
         with:
           mutation-floor: ${{ inputs['mutation-floor'] }}
+          mutation-tests: ${{ inputs['mutation-tests'] }}
+          mutation-case-timeout: ${{ inputs['mutation-case-timeout'] }}
 
   database:
     if: inputs.database == 'postgres'
@@ -565,12 +597,12 @@ jobs:
         with:
           node-version: 24
 
-      - uses: zerefukun/dev-config/.github/actions/install@6dfc8554eb461d79a0bca800e8bec6a4d1dd030f # v0.76.2
+      - uses: zerefukun/dev-config/.github/actions/install@b03e26176ddc695c032c60c9f4be57d057ac55a3 # v0.79.2
         with:
           git-ssh-key: ${{ secrets['git-ssh-key'] }}
 
       - if: inputs.build
-        uses: zerefukun/dev-config/.github/actions/build@6dfc8554eb461d79a0bca800e8bec6a4d1dd030f # v0.76.2
+        uses: zerefukun/dev-config/.github/actions/build@b03e26176ddc695c032c60c9f4be57d057ac55a3 # v0.79.2
         with:
           cache: ${{ inputs['build-cache'] }}
 
@@ -581,7 +613,7 @@ jobs:
       # reaches them and nothing else the job starts collides with them;
       # README's "Where it runs" has the rest.
       - id: services
-        uses: zerefukun/dev-config/.github/actions/services@6dfc8554eb461d79a0bca800e8bec6a4d1dd030f # v0.76.2
+        uses: zerefukun/dev-config/.github/actions/services@b03e26176ddc695c032c60c9f4be57d057ac55a3 # v0.79.2
         with:
           command: start
 
@@ -609,7 +641,7 @@ jobs:
                   console.log(`PORT=${s.port}`); s.stop(true);' >> "$GITHUB_ENV"
           printf 'DATABASE_URL=%s\nREDIS_URL=%s\n' "$DATABASE_URL" "$REDIS_URL" >> "$GITHUB_ENV"
 
-      - uses: zerefukun/dev-config/.github/actions/db-gate@6dfc8554eb461d79a0bca800e8bec6a4d1dd030f # v0.76.2
+      - uses: zerefukun/dev-config/.github/actions/db-gate@b03e26176ddc695c032c60c9f4be57d057ac55a3 # v0.79.2
         with:
           upgrade-gate: ${{ inputs.upgrade-gate }}
           semantic-fixtures: ${{ inputs['semantic-fixtures'] }}
@@ -629,8 +661,6 @@ jobs:
           probe-command: ${{ inputs['probe-command'] }}
           probe-timeout: ${{ inputs['probe-timeout'] }}
           timestamp-allowlist: ${{ inputs.timestamp-allowlist }}
-          capacity-script: ${{ inputs.capacity-script }}
-          capacity-path: ${{ inputs.capacity-path }}
           db-gate-evidence: ${{ inputs['db-gate-evidence'] }}
           route-allowlist: ${{ inputs.route-allowlist }}
           route-retire: ${{ inputs.route-retire }}
@@ -640,6 +670,6 @@ jobs:
       # Under always(), so a gate that failed still leaves nothing running and
       # nothing on the runner's disk.
       - if: always()
-        uses: zerefukun/dev-config/.github/actions/services@6dfc8554eb461d79a0bca800e8bec6a4d1dd030f # v0.76.2
+        uses: zerefukun/dev-config/.github/actions/services@b03e26176ddc695c032c60c9f4be57d057ac55a3 # v0.79.2
         with:
           command: stop

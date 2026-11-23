@@ -7,8 +7,8 @@ on:
   # The fleet's 02:00 UTC slot, for the half of the nightly this repo can run on
   # itself: the filing below. The other half — the long property budget — is set
   # by the test-suite action, which this repo substitutes for (see the step that
-  # runs `bun test` and the exemptions above it), so the numbers stay in that
-  # action rather than being restated here for a suite of six properties.
+  # runs the suite and the exemptions above it), so the numbers stay in that
+  # action rather than being restated here for this suite's properties.
   schedule:
     - cron: "0 2 * * *"
 
@@ -22,7 +22,9 @@ concurrency:
 jobs:
   check:
     runs-on: ubuntu-24.04
-    timeout-minutes: 15
+    # The suite's measured time plus one case hung to its bound, so that case is
+    # named before the job is cancelled: CLAUDE.md's Commands has the numbers.
+    timeout-minutes: 20
 
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -59,7 +61,7 @@ jobs:
       #
       # The fifth is the test-suite action, which the step below substitutes for
       # rather than uses. Its seal puts the run in a network namespace, and the
-      # Postgres and Redis this suite needs listen on the host's loopback, which
+      # Postgres, Redis and MySQL this suite needs listen on the host's loopback, which
       # that namespace does not reach. Substituting drops three guarantees every
       # other repo gets — the seal itself, the junit report, and the two greps
       # over it that refuse a skipped test and an assertion-free one — so this
@@ -75,8 +77,10 @@ jobs:
 
       - uses: ./.github/actions/duplicate-code
 
-      # This repo's own shell is the three libraries the composites source, and
-      # the gate that reads a consuming repo's scripts reads them here.
+      # This repo's own shell is the five scripts under .github/actions: the
+      # two libraries the composites source, the k6 loader the capacity-ramp
+      # command runs, and the scripts the build and test-suite actions run. The
+      # gate that reads a consuming repo's scripts reads them here.
       - uses: ./.github/actions/shell-scripts
 
       # re2 is the one dependency whose install script runs (package.json's
@@ -108,25 +112,28 @@ jobs:
 
       # The replay gate's fixtures are two databases and what each ends up
       # holding, and the limiter conformance suite grades a bucket two
-      # processes share and a limiter whose Redis is gone; nothing in-process
-      # stands in for either.
+      # processes share and a limiter whose Redis is gone; the request-timing
+      # connector suites grade what mysql2 and drizzle do against a real MySQL.
+      # Nothing in-process stands in for any of them.
       - id: services
         uses: ./.github/actions/services
         with:
           command: start
+          mysql: true
 
       # `--coverage` by hand: it is the one guarantee of the substituted action
       # this step does keep, and without it the floor above it declares is
       # applied to nothing. docs/gates/test-suite.md.
-      - run: bun test --coverage
+      - run: bun run test --coverage
         env:
-          # Neither has a default, deliberately: the conformance suite flushes
+          # None has a default, deliberately: the conformance suite flushes
           # its Redis and the database suites drop databases on their server,
           # and `localhost` on a machine that runs other things, a developer's,
-          # is not a safe thing for either to assume. Both are the instances the
-          # step above started.
+          # is not a safe thing for any of them to assume. Each is an instance
+          # the step above started.
           TEST_DATABASE_URL: ${{ steps.services.outputs.database-url }}
           TEST_REDIS_URL: ${{ steps.services.outputs.redis-url }}
+          TEST_MYSQL_URL: ${{ steps.services.outputs.mysql-url }}
 
       # Under always(), so a start or a suite that failed still leaves nothing
       # running and nothing on the runner's disk.
@@ -135,22 +142,13 @@ jobs:
         with:
           command: stop
 
-      # The k6 ramp this repo ships is the one file its own linter cannot read,
-      # so it gets executed instead: both branches, against a stub server.
-      - name: Execute the capacity ramp
-        run: |
-          set -euo pipefail
-          # shellcheck source=/dev/null
-          . .github/actions/_lib/k6.sh
-          bun tests/capacity-script.ts
-
       # Every JSON file nothing else here reads. What is skipped is a file some
       # other tool already parses, in a dialect `JSON.parse` refuses: oxlint's
       # schema declares `allowComments` and `allowTrailingCommas`, oxfmt reads
       # its own config the same way, and TypeScript has always taken both; `bun
       # run check` above fails loudly on a broken one. So the skip has to match
       # where that tool actually looks. oxlint reads a config from the directory
-      # it is linting, at any depth, and the base it extends with it; oxfmt reads
+      # it is linting, at any depth, and each base it extends with it; oxfmt reads
       # the one at the root; `bun check` here reads the root project alone, so a
       # tsconfig in a subdirectory is parsed by nothing and belongs in this step.
       - name: Parse every JSON config
@@ -161,7 +159,7 @@ jobs:
           # `core.quotepath`, and a newline in one would be two entries. Neither
           # is a name this repo has, and both are names a consumer could.
           mapfile -t -d '' files < <(git -c core.quotepath=false ls-files -z '*.json' |
-            grep -zvE '((^|/)(\.oxlintrc|oxlint\.base)\.json|^\.oxfmtrc\.json|^tsconfig(\.[^/]+)?\.json)$')
+            grep -zvE '((^|/)(\.oxlintrc|oxlint\.base|design-system\.base)\.json|^\.oxfmtrc\.json|^tsconfig(\.[^/]+)?\.json)$')
           bun -e '
             const { report } = await import("./.github/actions/_lib/gate.ts");
             const problems = [];

@@ -3,15 +3,21 @@ description: >-
   A throwaway PostgreSQL 16 and Redis 7 for one job, run under RUNNER_TEMP and
   listening on 127.0.0.1 alone, each on a port the kernel picked. `start` puts
   PostgreSQL 16's binaries on the job's PATH, installs redis-server, and hands
-  back both URLs as outputs; `stop`, in a step under `always()`, takes both down
-  and deletes their data. README's "Where it runs" has why it is this shape.
+  back both URLs as outputs, and with `mysql: true` starts a MySQL 8.0 the same
+  way and hands back its URL too; `stop`, in a step under `always()`, takes down
+  every server the start left and deletes their data. README's "Where it runs" has why it is this shape.
 
 inputs:
   command:
     description: >-
-      `start`, before the first step that needs either server, or `stop`, as the
+      `start`, before the first step that needs any of its servers, or `stop`, as the
       job's last step under `if: always()`.
     required: true
+  mysql:
+    description: >-
+      `true` also starts a MySQL 8.0, for a job whose suites need one; `false`,
+      the default, starts none. Read by `start` alone.
+    default: "false"
 
 outputs:
   database-url:
@@ -20,6 +26,9 @@ outputs:
   redis-url:
     description: redis://127.0.0.1:<port>, after `start`.
     value: ${{ steps.services.outputs.redis-url }}
+  mysql-url:
+    description: "mysql://root:<password made for this start>@127.0.0.1:<port>/mysql, after a `start` with `mysql: true`."
+    value: ${{ steps.services.outputs.mysql-url }}
 
 runs:
   using: composite
@@ -41,10 +50,24 @@ runs:
         sudo apt-get -o Acquire::Retries=3 update -qq
         sudo apt-get -o Acquire::Retries=3 install -qq -y --no-install-recommends redis-server
 
+    # The same image ships MySQL 8.0 from Ubuntu's mysql-server-8.0 package,
+    # its service disabled (the readme above, image 20261116.376.1), so nothing
+    # starts the image's own instance and nothing here installs one. That
+    # package's AppArmor profile, /etc/apparmor.d/usr.sbin.mysqld, confines
+    # /usr/sbin/mysqld to the system data directory, which would refuse the
+    # one under RUNNER_TEMP the start below creates; unloading it leaves the
+    # system instance and its data as they were.
+    - if: inputs.command == 'start' && inputs.mysql == 'true'
+      shell: bash
+      run: |
+        set -euo pipefail
+        sudo apparmor_parser --remove /etc/apparmor.d/usr.sbin.mysqld
+
     - id: services
       shell: bash
       env:
         INPUT_COMMAND: ${{ inputs.command }}
+        INPUT_MYSQL: ${{ inputs.mysql }}
       run: |
         set -euo pipefail
-        bun "$GITHUB_ACTION_PATH/services.main.ts" "$INPUT_COMMAND" "$RUNNER_TEMP/services" "$GITHUB_OUTPUT"
+        bun "$GITHUB_ACTION_PATH/services.main.ts" "$INPUT_COMMAND" "$RUNNER_TEMP/services" "$GITHUB_OUTPUT" "$INPUT_MYSQL"

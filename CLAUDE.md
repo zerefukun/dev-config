@@ -27,9 +27,10 @@ a change to a rule usually lands here too.
 - `anti-slop/` — the oxlint JS plugin `oxlint.base.json` names in `jsPlugins`,
   ported from dmmulroy/anti-slop, plus the house rules that carry a pick a file's
   position decides (README has the rule tables and the credit).
-  `shared/` holds the three questions more than one rule asks: `syntax.js` what
+  `shared/` holds the four questions more than one rule asks: `syntax.js` what
   was written, `bindings.js` what a name stands for and whether it can change,
-  and `types.js` what a type finally means — `resolveType` is the one walk
+  `runner.js` which of a test runner's API an expression names, and `types.js`
+  what a type finally means — `resolveType` is the one walk
   through parentheses, type arguments, transparent built-ins and aliases, and
   every classification is a switch over the node it stops at.
   Its specifier is relative to the base config, so consuming repos need no line
@@ -51,7 +52,8 @@ a change to a rule usually lands here too.
   drives. A step that is shell runs it as a body: inline in `action.yml` for
   `secret-scan`, `install` and `test-suite`, or as a script beside it for
   `build` (`build/cache-paths.sh`) and for the seal `test-suite` runs its suite
-  through (`test-suite/ci-seal.sh`). A new shell action takes the script shape,
+  through (`test-suite/ci-seal.sh`); `install` also runs `known-hosts.main.ts`,
+  so it takes both. A new shell action takes the script shape,
   since a file is what the suite can run and the shell-scripts gate reads, where
   an inline body is reached only by extracting it. `install`, `build` and
   `services` are the three that grade nothing. `install` is
@@ -62,39 +64,50 @@ a change to a rule usually lands here too.
   GitHub's Actions cache between runs. Those two are actions because both jobs
   of `check.yml` run them, and one copy serves both where a copy per job rots
   untested (#101). `services` is the job's throwaway Postgres 16 and Redis 7,
-  the one way a job gets a server. An action holds more than one module when it holds more than one subject:
+  and MySQL 8.0 when a job asks for it with `mysql: true`, as this repo's
+  `ci.yml` does: the one way a job gets a server. An action holds more than one module when it holds more than one subject:
   `repo-contract/live.ts` is what the word "live" derives — everything a repo
   owes because it carries people — beside the contract every repo satisfies
   whether or not anyone is on the other end; `repo-contract/browser-suite.ts` is
   the half of that word about pages rather than about a schema, which is a
   second subject reached through the one field;
+  `repo-contract/request-timing.ts` is the conformance test a live repo owes
+  for serving HTTP out of a database, and the kit's Effect check beside it
+  where the repo ships `effect`, called from the contract rather than from
+  `live.ts` because its waiver is graded in every lifecycle;
   `repo-contract/typecheck.ts` is what CI type-checks with — the script
   check.yml's typecheck lane reaches and the Bun `packageManager` names, one
-  fact seen from both ends; and
+  fact seen from both ends;
   `repo-contract/package-scripts.ts` is what a workflow step ends up running
   once the package scripts it goes through are followed, since reading a command
   for the program it runs is a subject of its own and neither rule that asks the
-  question is about it.
-  Of what `db-gate` holds beside its replay, six need their reason stated:
+  question is about it;
+  `repo-contract/reasons.ts` is where a commented JSON config switches
+  something off and whether the reason sits above it, the one reading both
+  `.oxlintrc.json` and every tsconfig are held to, each caller bringing its own
+  vocabulary of "off";
+  `repo-contract/lint-switch-offs.ts` is what "off" means in `.oxlintrc.json`,
+  and `repo-contract/tsconfig-flags.ts` is a check of `tsconfig.base.json` set back
+  in a repo's tsconfig, the one rule that reads the base itself, from the
+  action's own checkout; and `repo-contract/lockfile.ts` is what `bun.lock`
+  resolved, as against what a manifest declares.
+  Of what `db-gate` holds beside its replay, five need their reason stated:
   `semantic-fixtures.ts`, since what
   the base ref's replay proves about a _schema_ and what it proves about the
   _rows_ are two subjects and the second is the only gate here that grades data;
   `base-lineage.ts`, the lineage as the base ref carried it and the rollback that
   puts a checkout back onto one, which both of those need and neither is about;
-  `capacity.ts` for the ramp; `route-compat.ts`, the committed
+  `route-compat.ts`, the committed
   `routes.snapshot.json` — which **every** repo running the database job owes,
   since the file is what makes a route table readable at a ref nothing boots,
-  while the _holding_ of the base ref's routes is `live`-only — a second subject
-  over the route table `route-coverage.ts` grades, since "was this route ramped"
-  and "is this route still here" are different questions and only the second
-  reaches outside the run; `route-table.ts`, which is what those two floors
-  share and neither is about: how a route is named, and the three questions a
-  reasoned hatch over a set of routes is asked; and `fuzz.ts`, the third
-  question asked of that same table and the only one about _answers_ rather than
-  about the table — it reads the route log the coverage floor was graded on
-  rather than the app, which is what keeps its own traffic out of that floor
-  whatever order the steps are put in, and it carries a generator and a PRNG of
-  its own because an action runs from a checkout with no install. What more than
+  while the _holding_ of the base ref's routes is `live`-only;
+  `fuzz.ts`, the second question asked of that same table and the only one
+  about _answers_ rather than about the table, which also grades
+  `route-allowlist`, its own hatch, and carries a generator and a PRNG of its
+  own because an action runs from a checkout with no install; and
+  `route-table.ts`, which is what those two share and neither is about: the
+  route log as one step of the action read it off the app, how a route is
+  named, and the questions a reasoned hatch over a set of routes is asked. What more than
   one **action** reads lives in `_lib/`: `gate.ts` — which is where `plainly`
   sits, the environment a child whose output a gate reads is given, now that two
   actions spawn one — `dependency-specs.ts` —
@@ -123,43 +136,96 @@ a change to a rule usually lands here too.
   argument that one might.
   The shell helpers beside them are `pinned-tool.sh` — the verified fetch
   every pinned binary goes through — and, on top of it, `k6.sh` and
-  `shellcheck.sh`, each that fetch plus one pin: the three ramps in this house
-  run one k6, and everything here that reads shell reads it with one shellcheck.
+  `shellcheck.sh`, each that fetch plus one pin: everything here that reads
+  shell reads it with one shellcheck. `k6.sh` is read by no action: it is the
+  k6 the `capacity-ramp` command runs, kept beside the fetch it shares and
+  where Renovate's pinned-binary pattern already moves it, and `files` ships
+  both.
   Actions, rather than scripts run out of the package every repo already
   installs: a step in `node_modules` runs only if the repo's own workflow
   remembers to run it, and it moves whenever the lockfile moves — including on
   a Renovate automerge nobody reads. It costs the release pair under
   "Releasing", and it is why gate code is not importable by the repos it
-  gates: anything they call directly is a package export instead, which is
-  what `route-log.ts` below is.
+  gates: anything they import is a package export instead, which is what
+  `route-log.ts` below is, and anything they run is a command.
   `mutation-lane` is the one gate that runs a tool out of the gated repo's own
   install rather than a binary it pins itself: Stryker resolves its runner
   plugin from the working directory, and declaring the two packages in the
   repo's manifest is what puts them under its lockfile, its exact pins and its
-  release-age window. `duplicate-code` is written here rather than run as jscpd
+  release-age window. The lane's orchestrator, `mutation-lane.ts`,
+  chooses what to mutate and runs Stryker; beside it `tests.ts` is which tests
+  a run loads and whether the named ones pass unmutated, `report.ts` what
+  Stryker's report says about a branch, `child.ts` a child the lane runs, the
+  run's deadline that ends it and the interrupts it passes on, `machine.ts` what
+  the machine has to give Stryker, a Node.js every package it loads accepts and
+  a temp dir no other user can tamper with, named after a run that exited
+  without a report as what the machine lacks, and `values.ts` how the lane reads a repo's text
+  and quotes it back, which the orchestrator, `tests.ts` and `report.ts` do. `duplicate-code` is written here rather than run as jscpd
   for the reason `fuzz.ts` carries its own PRNG: an action runs from a checkout
   with no install, and a tool fetched from npm at run time is pinned by a
   version string with no checksum.
 - The `*.ts` at the root are what a consuming repo reaches, as against the
-  gates, which run over it from CI. Eight of them are **exports** it imports and
-  calls, and the two `dev-server*` files below are a bin it runs and the module
-  that bin imports. Two more reach it only inside those, and no specifier
-  exports either. `count-ceilings.ts` is the count budget's ceiling rule — the
+  gates, which run over it from CI, apart from `knip.base.ts`, a base above, and
+  `knip.ts` and `tsdown.config.ts`, this repo's own configs. Twenty of them are **exports** it imports and
+  calls, two `.d.ts` files beside them are exports its `tsconfig.json` names in
+  `types`, `dev-server.ts`, `request-timing-report.ts` and `capacity-ramp.ts`
+  are bins it runs, and `dev-server-derive.ts` and `capacity-ramp-ladder.ts` are
+  the modules the first and the third import. Nine more reach it
+  only inside those, and no specifier exports any of them. `count-ceilings.ts` is the count budget's ceiling rule — the
   file's shape, the seal, and the one function both the check and the write
   command decide by — which the build bundles into `dist/count-budget.js`, a
   module of its own so `tests/count-ceilings.test.ts` can search it with
   properties instead of browser runs. `file-lock.ts` is which process a file
-  names, proven from `/proc`, and the one lock both `dev-server up` and the
+  names, proven from `/proc` as alive, dead and not yet reaped, or not there,
+  and the one lock both `dev-server up` and the
   count budget's write command take: the build bundles it into the count
   budget, `files` ships its source for the bin, and `tests/file-lock.test.ts`
   holds each waiter before every step through the `between` seam `lock` takes
-  for that suite's sake. Each export is reachable through
+  for that suite's sake. Its `parseStat` is the judgement of one stat line apart
+  from reading it, graded over `tests/proc-stat/`, which is real processes' text
+  that `tests/proc-stat-capture.ts` writes: recapture it, never edit it by hand.
+  `request-timing-operation.ts` is what request timing's
+  modules share, the operation, its waits, its record and the
+  `AsyncLocalStorage` that carries the current operation, which the build makes
+  a chunk beside them and `files` ships as source for the summary;
+  `request-timing-summary.ts` is what the reader makes of a log, which the bin
+  feeds stdin and the conformance kit parses a record with;
+  `request-timing-wait.ts` is what every wait connector is built from, the
+  Proxy that answers a client as itself with some members standing in and the
+  one way a call is measured, which the build makes a chunk beside them;
+  `request-timing-entry.ts` is what every entry connector is built from, a
+  response body passed through and watched for its end, which the build makes
+  a chunk beside them too; `request-timing-route.ts` is the mark an entry
+  connector leaves on a route handler it wrapped, which the Next.js and tRPC
+  connectors' builds share as a chunk and the conformance kit's route-tree
+  check reads, from source; `request-timing-effect-driver.ts` is the driver the
+  kit's Effect check runs its table through, which the build takes into the
+  check and `tests/request-timing-attribution.test.ts` runs generated plans
+  through; `interleaving-runtime.ts` is whether the process's `effect` is the
+  runtime `interleaving.ts` was written against, the version its import checks
+  and the facts the first `simulate` checks, each on Effect alone, which
+  `files` ships as source beside it. Each export is reachable through
   `files` and `exports`, and each is here rather than in an action for the same
   reason: it runs inside the repo's own suite or app, on what only that process
   can reach. `route-log.ts` is the protocol between an app and the two floors
   over its route table; `invariant-sweep.ts` replaces Playwright's browser
   context with one that watches every page it opens, popups included, and turns
   Playwright's own `video` on when the run sets `E2E_VIDEO=on`;
+  `request-timing.ts` records per operation where its time went,
+  carrying the operation in `AsyncLocalStorage`, in plain code and in an Effect
+  program alike; `request-timing-conformance.ts` is the
+  check an adopting app runs against its booted server, and
+  `request-timing-conformance-effect.ts` the check of the app's own Effect, which
+  the app hands its `effect` module to, since no file here imports `effect` but
+  as types except `interleaving.ts` and `interleaving-runtime.ts`, the
+  interleaving export's; the bin
+  `request-timing-report.ts` reads a log of the records; the connectors
+  `request-timing-elysia.ts`, `request-timing-tanstack-start.ts`,
+  `request-timing-next.ts`, `request-timing-trpc.ts`,
+  `request-timing-mysql2.ts`, `request-timing-bun-sql.ts`,
+  `request-timing-bun-redis.ts` and `request-timing-fetch.ts` are an app's entry and its waits, each importing
+  its framework or driver as types only, so the package gains no runtime
+  dependency;
   `count-budget.ts` is that sweep's `test` with a `budget` fixture beside it,
   which counts a job's work per phase and holds each count exactly to a ceiling
   committed beside the spec, which the `COUNT_BUDGET=write` run lowers and
@@ -170,9 +236,20 @@ a change to a rule usually lands here too.
   app's own route table; `characterization-net.ts` is the harness under a golden
   suite; `property.ts` is `fc.assert` with the run's budget applied — the one
   call every property test goes through, so a nightly can multiply how far each
-  of them searches with no test changing; `interleaving.ts` runs an Effect
+  of them searches with no test changing; `interleaving.ts` runs an Effect 4
   program under a `Scheduler` whose every choice comes from fast-check data, so
-  a property generates the order overlapping fibers run in. `property.ts`,
+  a property generates the order overlapping fibers run in, and imports
+  `effect` at runtime, as `interleaving-runtime.ts` does, because it needs
+  Effect's own values, which is why `effect` is an optional peer; `narrowing.ts` is
+  `only`, `nth`, `must` and `rejectionOf`, which hand back a value the compiler
+  could not prove present or throw naming what they found, and import no test
+  runner so a Playwright spec under node takes them too. `bun-test.d.ts` types
+  bun:test's `.resolves` and `.rejects` chains as promises, which bun-types up
+  to 1.4.4 does not, so `typescript/await-thenable` stays on in suites;
+  `css-custom-properties.d.ts` makes any `--name` a key of React's
+  `CSSProperties`, the cast-free route `shadcn/no-inline-styles` sends a
+  runtime value down. Both ship as source, and `tests/declarations.test.ts`
+  type-checks and lints a consumer's program with and without each. `property.ts`,
   `invariant-sweep.ts` and `count-budget.ts` are the three exports that read the
   environment for a value. Their pages are `docs/exports/`.
   `limiter-conformance.ts` registers tests where `response-schema.ts` answers
@@ -180,11 +257,12 @@ a change to a rule usually lands here too.
   is a value one call can grade, and a limiter is a sequence of attempts against
   a live Redis that only a test framework can sequence.
   Every one is spelled **without an extension**, and what a specifier resolves
-  to is this package's business rather than a caller's: three of them are built and
-  five ship their source, and no import says which. `tsdown.config.ts` is where
+  to is this package's business rather than a caller's: fourteen of them are built and
+  eight ship their source, and no import says which. `tsdown.config.ts` is where
   that decision lives and why — the same fact `anti-slop/` above turns on — and
   STACK.md's shared UI library is where a committed `dist/` is argued.
-  `bun run build` writes `dist/{route-log,invariant-sweep,count-budget}.{js,d.ts}`;
+  `bun run build` writes `dist/{route-log,invariant-sweep,count-budget,narrowing,request-timing,request-timing-conformance-effect,request-timing-elysia,request-timing-tanstack-start,request-timing-next,request-timing-trpc,request-timing-mysql2,request-timing-bun-sql,request-timing-bun-redis,request-timing-fetch}.{js,d.ts}`
+  and the chunks the request-timing ones share;
   `tests/dist.test.ts` holds that directory equal to a fresh build, and
   `.oxfmtrc.json`, `.oxlintrc.json` and `lefthook.yml` each say why they skip it.
 - `dev-server.ts` and `dev-server-derive.ts` — one supervised dev server per git
@@ -199,32 +277,46 @@ a change to a rule usually lands here too.
   only the bin is waived from the coverage floor in `bunfig.toml`.
   Its reference page is README's "One dev server per worktree" rather than a
   `docs/exports/` one, and `tests/dev-server.test.ts` drives it against real
-  worktrees and real detached processes — the one suite here that spends real
-  time, because a signal reaching a process group is not a thing any injected
-  clock has a part in.
-- `db-gate/capacity.js` is the exception: it runs inside k6, not under this
-  repo's compiler or linter, which is why `.oxlintrc.json` ignores it. A JSON
-  config cannot carry the reason, so it is here.
+  worktrees and real detached processes, spending real time, because a signal
+  reaching a process group is not a thing any injected clock has a part in. A
+  server that died and was not reaped is a real zombie there too: the case runs
+  `up` under `tests/unreaping-parent.ts`, which adopts the server and never
+  reaps it.
+- `capacity-ramp.ts` and `capacity-ramp-ladder.ts` — the capacity ramp,
+  reached as `bun run capacity-ramp` through the `bin` entry, in
+  `request-timing-report.ts`'s shape: the bin is the argv, the signals, the
+  output and the exit status, and the module is the ramp the suite drives, which
+  is why only the bin is waived from the coverage floor. Its page is
+  `docs/commands/capacity-ramp.md`. `capacity-ramp.js` beside them is the
+  script k6 runs when the caller names paths rather than a script: it runs
+  inside k6, not under this repo's compiler or linter, which is why
+  `.oxlintrc.json` ignores it, and `tests/capacity-ramp.test.ts` runs it
+  through the pinned k6 against a stub on loopback.
 - `tests/` — a fixture suite per gate, driving it against a violating tree and a
   clean one. A gate without one is a claim. `build-cache.test.ts` is the build
   action's, running `cache-paths.sh` against a fixture checkout for the keys and
   paths it hands actions/cache, and reading the action's step order. `anti-slop.test.ts`,
-  `anti-slop-test-smells.test.ts`, `anti-slop-env.test.ts` and
+  `anti-slop-test-smells.test.ts`, `anti-slop-test-support.test.ts`,
+  `anti-slop-env.test.ts` and
   `lint-policy.test.ts` hold every lint rule in `anti-slop/` to the same bar — a
   block of cases per rule, split where the base splits, since the rules scoped to
-  test files have a second question to answer about every case, the one scoped
-  away from `env.ts` and from a suite has a third, the two a directory grants or
-  scopes have a fourth, and the ones that apply everywhere have none. None of
-  them states how many there are: `anti-slop.test.ts` asks the plugin and the
-  base for their rule names and requires the two sets to be equal, which is the
-  check a count would replace with a number to forget. All of them run through
+  test files have a second question to answer about every case,
+  `no-chained-type-assertions` and `no-test-support-imports`, which the suite
+  scope switches on and off, read that scope's globs off the base,
+  `no-env-access`, scoped away from `env.ts` and from a suite, has a third, the two a directory
+  grants or scopes have a fourth, and the ones that apply everywhere have none.
+  None of them states how many there are: `anti-slop.test.ts` asks the plugin
+  and the base for their rule names and requires the two sets to be equal, and
+  README's anti-slop tables to name the same set, which is the check a count
+  would replace with a number to forget. All of them run through
   `lint-fixture.ts`,
-  which owns the case shape and lints a whole block in one oxlint spawn, and
+  which owns the case shape (`unfailable-assertions-cases.ts` holds the one
+  rule's table that outgrew its suite, which runs it with the rest) and lints a whole block in one oxlint spawn, and
   refuses a run whose plugin threw or whose exit status and diagnostics
   disagree, both of which otherwise read as a clean tree.
   `anti-slop-upstream.test.ts` is
   upstream's own fixtures, as a differential oracle over every rule it ships
-  tests for. Three suites are not a gate's: `oxlint-base.test.ts` holds what
+  tests for. Some suites are not a gate's. `oxlint-base.test.ts` holds what
   the base config itself must — an override REPLACES a list-shaped rule rather
   than adding to it, which it proves against a config it builds itself and then
   holds every override in the base to, and that a consuming repo's own list
@@ -244,17 +336,37 @@ a change to a rule usually lands here too.
   one word deciding whether a whole rule set applies is its own subject), what
   pages cost a live repo in `repo-contract-browser.test.ts` (a second subject
   under that same word, and the reason the live static site is in the fixture
-  rather than in either), how a dependency spec is read in
+  rather than in either), what serving HTTP out of a database costs one in
+  `repo-contract-request-timing.test.ts` (mirroring `request-timing.ts`), how a
+  dependency spec is read in
   `repo-contract-pins.test.ts`, the git hooks in `repo-contract-lefthook.test.ts`,
   the bunfig's release-age window and its exclusions in
-  `repo-contract-release-age.test.ts`, and what CI type-checks with in
-  `repo-contract-typecheck.test.ts` (mirroring `typecheck.ts`);
+  `repo-contract-release-age.test.ts`, what CI type-checks with in
+  `repo-contract-typecheck.test.ts` (mirroring `typecheck.ts`), a tsconfig's
+  weakened flags in `repo-contract-tsconfig.test.ts` and the lock in
+  `repo-contract-lockfile.test.ts` (each mirroring its module), the second over
+  the `bun-lock-*.lock` files beside it, which are locks `bun install` wrote
+  rather than ones typed by hand;
   `journalled-migrator.ts`, `replaying-migrator.ts` and
   `schema-migrator.ts` are the three `db:migrate` shapes the database gates are
   written for — a journalled one, a hand-rolled runner with no journal, and the
   per-lineage journals a repo with more than one lineage has to have; and `mutation-lane.test.ts` links this repo's own `node_modules` into
   each fixture and runs Stryker for real — a stubbed mutation run would prove
-  nothing about the tool that gate exists to drive. `test-suite.test.ts` is the
+  nothing about the tool that gate exists to drive. `mutation-lane-tests.test.ts`
+  is the same over which tests a run loads when a repo names them, a subject of
+  its own, `mutation-lane-clocks.test.ts` over the clocks a run keeps and what a
+  timeout means under them, which spends real seconds waiting a slow mutant out,
+  `mutation-lane-machine.test.ts` over what the machine has to give a run, and
+  `mutation-lane-fixture.ts` is the fixture repository and the run
+  the four suites share, whose `messages` carries what Stryker printed into a
+  run that exited without a report, so a case that meets one on a CI machine
+  nobody can log into fails with the cause. `mutation-lane-child.test.ts` drives `child.ts` alone,
+  with real signals to real processes, through `mutation-lane-child-driver.ts`,
+  a stand-in for the lane a case can interrupt. `mutation-lane-report.test.ts`
+  drives `report.ts` alone, over generated reports in every order, because a
+  real run writes its mutants only in the order they finished: whatever order
+  the report holds, the findings are listed by file, first line, last line,
+  mutator, replacement and status. `test-suite.test.ts` is the
   same argument one level down: that gate is a shell script rather than a
   module, so the suite extracts the step out of the shipped `action.yml` and
   runs it over fixture suites of its own. It needs sudo for the ci-seal helper, because
@@ -279,8 +391,9 @@ a change to a rule usually lands here too.
   browser facts — the ceiling rule is not one, and is searched without a browser
   in `count-ceilings.test.ts` — with
   a React app among its pages that it builds in memory once per suite, for
-  production — `react` and `react-dom` are devDependencies nothing imports for
-  that reason — and its suite runs Playwright several times over one tree,
+  production — `react-dom` is a devDependency nothing imports for that reason,
+  and `react` one only `css-custom-properties.d.ts` reads, with `@types/react`
+  for `tests/declarations.test.ts` — and its suite runs Playwright several times over one tree,
   because what one run writes into a ceilings file is what the next is checked
   against. That suite also spins a process on every core for the length of 20
   runs of one page, since a count read under load is half of what it grades, and
@@ -290,23 +403,73 @@ a change to a rule usually lands here too.
   bigger number and the only thing that says whether it worked is how many times
   the predicate ran; the default it multiplies is graded as a difference against
   `fc.assert` rather than against the literal 100, which is fast-check's to
-  change. `interleaving.test.ts` searches the racy fixtures in
-  `interleaving-fixtures.ts` on fresh seeds, sized and counted by the rules on
-  the export's page, and holds the page's regression probe on the torn read;
-  the fixtures are a module of their own because
+  change. The `interleaving` export's suites split by subject: `interleaving.test.ts` the
+  order a run takes and how it ends; `interleaving-races.test.ts` the search of
+  the racy fixtures in `interleaving-fixtures.ts` on fresh seeds, sized and
+  counted by the rules on the export's page, the page's examples and its
+  regression probe on the torn read; and `interleaving-runtime.test.ts` a
+  process per runtime fact the export rests on, its `effect` or its host's
+  `node:async_hooks` replaced with that fact made false, for the first
+  `simulate` to name it, and on a scheduler of its own the interruption Effect
+  4.1.4 loses, whose op `simulate` never preempts: that case fails once a
+  release stops losing it, which is when the exclusion comes out of
+  `interleaving.ts` (dev-config#210). The fixtures are a module of their own because
   `interleaving-measure.ts`, which re-takes the page's measurement table, runs
   them too. `fuzz.test.ts` drives the fuzzer against a real server on a real
   port, since each of its four invariants is a statement about a response — and the
   route that never answers is why that fixture disposes without awaiting
-  `stop()`. `@sinclair/typebox` is a devDependency nothing here imports:
+  `stop()`. `capacity-ramp.test.ts` runs the shipped script through the
+  pinned k6 against a stub that breaks on how many k6 connections are in use, a
+  count that is the step's users whatever share of a core the run gets, where
+  requests in flight would depend on how fast k6 got round its loop; the
+  file's header says why in use is an order and not the connections the stub
+  holds. No case there asserts a gap between two times k6 measured, since each
+  includes how long this box took to schedule the stub and k6: the file's
+  header says how the cases avoid one. The bin's statuses and the files a run
+  does or does not leave are read off a spawned process. `@sinclair/typebox` is
+  a devDependency nothing here imports:
   it is elysia's peer, and `t` — which `response-schema.test.ts` builds its
   fixture app's schemas with — is typebox under elysia's re-export.
+  Request timing's suites split by what each grades: `request-timing.test.ts`
+  the operation and its record, in plain code and in an Effect program,
+  `request-timing-attribution.test.ts` the property that every wait lands in
+  its own operation's record, in plain code and through the kit's Effect
+  driver; `request-timing-summary.test.ts` the reader, the bin spawned for its
+  statuses; `request-timing-conformance.test.ts` the kit, against the
+  servers `request-timing-fixture.ts` boots, a plain one, one running Effect
+  and one per wrong adoption the kit names; and
+  `request-timing-conformance-effect.test.ts` the kit's Effect check, which a
+  process of its own with `node:async_hooks` hidden from Effect must see fail,
+  and that of everything `files` ships only `interleaving.ts` and
+  `interleaving-runtime.ts`, the interleaving export, import `effect` at runtime. The connectors' suites run against real servers:
+  `request-timing-elysia.test.ts` boots the Elysia app
+  `request-timing-elysia-fixture.ts` builds over MySQL, Redis and an outside
+  service, once with timing off as the differential's oracle;
+  `request-timing-tanstack-start.test.ts` boots the Start app
+  `request-timing-start-app/` holds, which `request-timing-start-build.ts`
+  builds with Vite and the Start plugin once per run into
+  `node_modules/.cache` and `request-timing-start-server.ts` serves with Bun,
+  in-process with timing on and in a process of its own through
+  `request-timing-start-serve.ts` with timing off, as the differential's
+  oracle; `request-timing-next.test.ts` and `request-timing-trpc.test.ts` boot
+  the Next.js app `request-timing-next-app/`, shaped as the warehouse with tRPC
+  and Effect over MySQL and an outside service, which
+  `request-timing-next-fixture.ts` builds once per run with `next build` and
+  starts per suite with `bun --bun next start`, once more with timing off as
+  the differentials' oracle, its build output gitignored and its route files
+  knip entries since only Next.js loads them; and `request-timing-mysql2.test.ts`, `request-timing-bun-sql.test.ts`,
+  `request-timing-bun-redis.test.ts` and `request-timing-fetch.test.ts` grade
+  one driver each. `request-timing-servers.ts` is their one reader of
+  `TEST_MYSQL_URL` and `TEST_REDIS_URL`, `request-timing-postgres.ts` makes the
+  Postgres databases on the server `postgres.ts` reads, and
+  `request-timing-oracle.ts` is how each reads what an operation counted and
+  what a differential step settled with, needing no server of its own.
   `git-free-environment.ts` is the one file here that is not a suite and not a
   fixture: `bunfig.toml` preloads it, so it runs before the first test file of
   every `bun test`. It takes the whole `GIT_` prefix out of the environment,
   because git hands a command it runs the location of the repository it is
   acting on. No hook of this repo runs the suite, but
-  `git rebase --exec 'bun test'` does, and so would a developer's own hook —
+  `git rebase --exec 'bun run test'` does, and so would a developer's own hook —
   and with `GIT_DIR` set the fixtures are built inside that repository, which
   once rewrote a branch. Doing that to `process.env` reaches only the spawn
   sites that pass one, since bun's `env` default is the block the process
@@ -317,19 +480,22 @@ a change to a rule usually lands here too.
   have left out — `NODE_ENV`, which `bun test` sets after launch.
   `git-free-environment.test.ts` holds all of it from outside, against a
   sacrificial repository it builds.
-- `docs/gates/*.md` — a reference page per gate; `docs/exports/*.md` — one per
-  package export. README holds both maps.
+- `docs/gates/*.md` — a reference page per gate but `lint-workflows` and
+  `secret-scan`; `docs/exports/*.md` — one per extensionless export, the eleven
+  `request-timing` ones sharing `request-timing.md`; `docs/commands/*.md` — a
+  page per command whose reference is not already README's or an export's,
+  `capacity-ramp.md` today. README holds the three maps.
 
 ## Commands
 
 ```sh
 bun run check   # format:check + lint + typecheck + knip
-bun test        # the gate suites
-bun run build   # rewrites the committed dist/ from the three built exports
+bun run test    # the gate suites, under the suite's per-test bound
+bun run build   # rewrites the committed dist/ from the exports tsdown.config.ts builds
 ```
 
-Neither is coverage-floored: `bunfig.toml` declares the threshold and CI's
-`--coverage` applies it, so `bun test --coverage` is the run CI makes —
+None of them is coverage-floored: `bunfig.toml` declares the threshold and CI's
+`--coverage` applies it, so `bun run test --coverage` is the run CI makes —
 `docs/gates/test-suite.md`.
 
 `anti-slop/**` sits outside that floor, in `bunfig.toml`: its rules run inside a
@@ -339,34 +505,81 @@ them and then watches them run nowhere. What carries their duty instead is
 trees with the shipped binary — a block of cases per rule, and a check that the
 base enables exactly the rules the plugin defines.
 
-`tests/house-limiter.ts`, `dev-server.ts` and `property.ts` are out for the same
-reason and carry their duty the same way — a suite that spawns the real thing.
+`tests/house-limiter.ts`, `dev-server.ts`, `property.ts`,
+`request-timing-report.ts` and `capacity-ramp.ts` are out for the same reason and carry their duty the same way — a suite that spawns the real thing.
 `bunfig.toml` names which suite, per file, and says why `dev-server-derive.ts`
 is not with them.
 
-`bun test` needs a Postgres, a Redis, a chromium and sudo for the ci-seal helper. The
-first because the replay gate's property is what two databases end up holding
-and the semantic fixtures' is what a real migration does to a real row; the
-second because a limiter's bucket is shared by two processes and its Redis can
-be gone; the third because what the invariant sweep claims is what a browser
-reports; the fourth because the test-suite gate seals a run in a network
-namespace and nothing short of taking one says whether it holds. Neither
-`TEST_DATABASE_URL` nor `TEST_REDIS_URL` has a default, and each is refused when
-unset: the database suites create and **drop** databases on the server they are
-given and the conformance suite **flushes** its Redis, and `localhost` on a
-developer's machine, such as one running the fleet's stacks, is a host address
-a stack may be publishing. `tests/postgres.ts` is the one reader of the first.
+The `test` script is `bun test --timeout 120000`, and that bound is every case's
+and every hook's here unless one names its own. A case's time is its CPU time
+over the share of a core it is given, and on a machine shared with other work
+that share can fall below 3%: upstream measured the Bun.sql differential, about
+0.1s of CPU, taking 3.9s at a 3% quota and timing out at bun's 5s default on
+its shared runner box. GitHub's ubuntu-24.04 runner gives a job its machine,
+and the bound is sized by CI's job limit there: the green run of 2026-11-23
+(45216934019) took 13m17s, its suite step 12m24s, so that run plus one case
+hung to 120s is 15m17s, and `ci.yml` gives the job 20 minutes so that the hung
+case is still named. Only the flag reaches every file: bun 1.4.4 ignores a
+`timeout` key in `bunfig.toml`, and a `setDefaultTimeout` in a preload binds
+only the first file, so a bare `bun test` runs on 5s. So does a `bun test` a
+case spawns, unless the spawn or its fixture names a limit, which every one
+whose time decides its case does (`SPAWNED_CASE_MS` in `tests/tree.ts`).
+
+Three hooks name longer bounds, each for a whole run of a tool:
+`tests/count-budget.test.ts` 600s and `tests/invariant-sweep.test.ts` 300s for
+Playwright runs, count-budget's including one with every core busy, and
+`tests/request-timing-next-fixture.ts` 300s for a cold `next build` and boot.
+A hang in either 300s hook adds at most five minutes to that run's 13m17s and
+ends inside the job; one in the 600s hook can add ten, past the job's 20
+minutes, and the job is then cancelled with nothing named. One case names a longer
+bound too: `tests/interleaving.test.ts`'s search of 8 400 interleavings, 600s
+for about 7s of CPU, which a 3% share stretches past 120s, and a hang in it
+ends as the 600s hook's does. The shorter bounds left, in `tests/probe.test.ts`
+and `tests/mutation-lane-child.test.ts`, are those cases' oracles, each killing
+an implementation that hangs.
+
+`bun run test` needs a Postgres, a MySQL, a Redis, a chromium and passwordless
+sudo. The Postgres because the replay gate's property is what two databases end
+up holding and the semantic fixtures' is what a real migration does to a real
+row, and the request-timing Bun.sql and Start connectors on what Bun.sql and
+drizzle do against one; the MySQL because the request-timing connectors are
+graded on what mysql2 and drizzle do against a real server; the Redis because a limiter's bucket is
+shared by two processes and its Redis can be gone; the chromium because what
+the invariant sweep claims is what a browser reports; and the sudo, first for
+the ci-seal helper, because the test-suite gate seals a run in a network
+namespace and nothing short of taking one says whether it holds, and second
+because the file lock's and the dev server's suites mount a `/proc` that hides
+other users' processes, which only root can. None of `TEST_DATABASE_URL`, `TEST_MYSQL_URL` and
+`TEST_REDIS_URL` has a default, and each is refused when unset: the database
+suites create and **drop** databases on the server they are given and the
+conformance suite **flushes** its Redis, and `localhost` on a developer's
+machine, such as one running the fleet's stacks, is a host address a stack may
+be publishing. `tests/postgres.ts` is the one reader of the first.
 README's "Gating this repo" has the one-liners, including the browser install.
 
-Two runs may share one server, which is what two worktrees under review are.
-Every database either end makes is named for what tells the runs apart: the
-suite's own carry the process that created them, and the three the gates build
-for themselves — `upgrade_path_<digest>`, `semantic_fixtures_<digest>` and
-`backfill_<digest>` — carry the checkout they are working on.
+`tests/capacity-ramp.test.ts` also needs k6, which it fetches the way the
+command does: the release archive from k6's GitHub releases, checked against
+the pin in `.github/actions/_lib/k6.sh` and kept in
+`$XDG_CACHE_HOME/dev-config/k6` (else `~/.cache/dev-config/k6`), so a machine
+downloads it once per pin. Every k6 run in that suite is pointed at a stub
+server the case starts on loopback, and nothing else.
 
-This repo runs its own gates on itself in CI, from the working tree, with three
-exemptions named in `ci.yml`: it cannot extend itself by package name, its CI
-cannot pin a commit it is making, and it has no runtime environment.
+Two runs may share one Postgres or one MySQL, which is what two worktrees under
+review are. Every database either end makes is named for what tells the runs
+apart: the suite's own carry the process that created them, and the three the
+gates build for themselves — `upgrade_path_<digest>`, `semantic_fixtures_<digest>`
+and `backfill_<digest>` — carry the checkout they are working on. Two runs may
+not share one Redis: the limiter conformance suite flushes it between its
+cases, which wipes the other run's keys whatever prefix they carry, so each run
+gets a Redis of its own.
+
+This repo runs its own gates on itself in CI, from the working tree, with five
+structural facts named in `ci.yml`. Three are exemptions of the repo contract:
+it cannot extend itself by package name, its CI cannot pin a commit it is
+making, and it has no runtime environment. Two are gates it does not run on
+itself: it has no mutation lane, and its CI runs `bun run test --coverage` in
+place of the test-suite action, so neither the seal nor the checks that refuse
+a skipped test and an assertion-free one hold this repo (dev-config#58).
 
 ## Releasing
 

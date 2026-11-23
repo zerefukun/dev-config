@@ -22,13 +22,29 @@ as against a gate, which runs over that repo from CI. The distinction is not
 packaging: a gate reads a tree from outside and can be pinned to a commit, and
 an export is for the facts only visible from inside a running repo — its own
 route table, its own limiter, its own browser. Gate code is deliberately not
-importable, so anything a repo calls is an export.
+importable, so anything a repo imports from this package is an export.
+
+**Command** — a module in this package that a consuming repo runs rather than
+imports: installing the package puts it in `node_modules/.bin`, and
+`bun run <command>` reaches it with no script of the repo's own. Distinct from
+a gate, since nothing in CI runs it, and from an export, since nothing imports
+it.
 
 **Conformance suite** — an export that registers tests rather than answering
 with problems, because what it grades is a sequence rather than a value. It
 takes the repo's implementation and the resources it needs, and the repo's own
 `bun test` is what runs it. Distinct from a gate: nothing in CI knows it exists
 until the suite it is part of fails.
+
+**Conformance kit** — request timing's checks a repo's own test calls, which
+register no test of their own: one against its booted server, which grades one
+operation's record; one over a Next.js app's route files, which grades how each
+handler is wrapped; and one of the app's own Effect, which grades where its
+waits are counted. Distinct from a conformance suite, which registers its
+tests, and known to CI: the repo contract requires a live repo that serves HTTP
+and owns a database to have a test importing the kit, and one importing its
+Effect check where it ships `effect`, or to say at the call site how its
+operations are timed otherwise.
 
 **Deny tier** — the rules set to `error`. `warn` is advisory and cannot fail a
 build, so the deny tier is the whole of what a lint config enforces.
@@ -47,10 +63,10 @@ property of what the repo _is_, and it is visible in the caller's diff.
 one field and inferred by nothing: `dev` or `live`. Distinct from a deployment,
 which is a thing that has happened, and from an exemption, which is about what a
 repo _is_ — this is about who it owes. `live` is what the crash reporting is
-derived from; the swept browser suite for a repo that ships pages; and — for a
-repo that owns migrations — the backups, the rehearsed restore and the upgrade
-gate as well. All of it read from the repo rather than from a workflow input, so
-that going live is one word rather than a checklist somebody does half of, and
+derived from; the swept browser suite for a repo that ships pages; for a repo
+that owns migrations, the backups, the rehearsed restore and the upgrade gate as
+well; and for one that also serves HTTP, the request-timing conformance tests.
+All of it read from the repo rather than from a workflow input, so that going live is one word rather than a checklist somebody does half of, and
 cannot be undone by editing the workflow those rules govern. It only moves up:
 `dev` says nothing about anyone, `live` says people are on the other end, and a
 repo that is genuinely being wound down says so with an exemption rather than
@@ -97,10 +113,10 @@ which stops the rule blocking anything at all.
 
 **Floor** — a bound set below what honest work already produces, there to catch
 the absence of the work rather than to be aimed at: the coverage threshold, the
-capacity ramp's route coverage, and the route compatibility floor. A floor says
-a route has been under load once, or that it is still there at all; it says
-nothing about whether that load resembled production, or whether the route still
-answers what it used to.
+route compatibility floor, and the fuzzer's four invariants. A floor says a
+route is still there at all, or that a request nobody expected is refused
+rather than crashed on; it says nothing about whether the route still answers
+what it used to.
 
 **Nightly** — a run of the shared check that nobody is waiting on: the same
 gates over the same tree, with the searches that scale given room to run, and
@@ -115,16 +131,41 @@ that has gone wrong; a budget bounds something that could go on forever and is
 worth more the longer it does. A budget is never a bar to clear — what it stops
 is a pass.
 
-**Trend line and claim** — the two things a capacity ramp can produce, from one
-script and one reader. On a CI runner the app shares a machine with a Postgres,
-a Redis and a neighbour nobody chose, so the number is only comparable with the
-last run's: a trend line. Against the deployed shape it is the claim testing.md
-asks for. `ran-on` names which happened, because nothing downstream can tell.
+**Held step** — the most simultaneous users a capacity ramp's target answered
+inside both bounds, failed requests and the 95th percentile of response time.
+The step after it is the broken step, and the bound it broke is where to start
+looking. A held step is compared only with another of the same measurement: the
+same k6, target, paths, script, steps, hold and bounds. A result records that
+measurement and names its predecessor of it and no other.
 
 **Route table** — the routes an app serves, named by the app itself as its
 router registered them (`/presets/:id`, not `/presets/42`). Only the router
 knows which route answered a URL, so it is the only honest source, and both
 floors over it are measured against it.
+
+**Operation** — the innermost named handler a server's framework dispatches: a
+matched route handler, one RPC procedure, one server function, named as its
+router registered it. A request that only carries procedures, such as a tRPC
+batch, is not one; each procedure in it is. Distinct from a request, which is
+what reached the server, and from background work, which belongs to no
+operation.
+
+**Wait** — a span in which an operation waits on something outside its own
+code: its database (`db`), an outside HTTP service (`out`) or an in-memory store
+such as Redis (`store`). A wait belongs to the operation that issued it,
+whoever settles it.
+
+**Record** — the one line of JSON an operation closes into when its response has
+finished: its name, method, status, total time, and per kind of wait the summed
+time and the count. It is derived, never edited, and nothing of a person can
+be represented in it.
+
+**The rest** — an operation's total time minus the time during which at least
+one of its waits was in flight. It holds the code's own time and every wait
+nobody measured, so it is never called the app's code.
+
+**Sink** — the function an app hands request timing when it switches it on,
+which writes each record to stdout. The export itself writes nothing.
 
 **Route snapshot** — a repo's committed `routes.snapshot.json`: its route table
 as of a commit, which is what makes the table readable at a ref nothing boots.

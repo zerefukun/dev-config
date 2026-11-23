@@ -193,6 +193,22 @@ describe("the snapshot's own shape", () => {
   // Sorted by path and then by method, so that the only thing a regenerated file
   // diffs on is a route that changed. Sorting by method first, or not at all,
   // moves half the file whenever a route is added.
+  test("the file compares paths by code unit", () => {
+    // The wrong implementation collates, as `localeCompare` does, which puts
+    // `/a` before `/B` and orders by whatever ICU data the runtime carries.
+    const listed: unknown = JSON.parse(
+      snapshotOf([
+        { method: "GET", path: "/a" },
+        { method: "GET", path: "/B" },
+      ]),
+    );
+
+    expect(listed).toEqual([
+      { method: "GET", path: "/B" },
+      { method: "GET", path: "/a" },
+    ]);
+  });
+
   test("the file is sorted by path, then by method", () => {
     // `DELETE /zzz` is what tells the two orderings apart: its method sorts
     // first and its path sorts last, so a file sorted by method leads with it.
@@ -270,8 +286,8 @@ describe("the routes the base ref served", () => {
   });
 
   // The floor itself. Nothing else in the database job notices a route that
-  // stopped being registered: the app boots, the ramp runs, and the coverage
-  // floor is happy because what is gone is not in the table it grades.
+  // stopped being registered: the app boots, and the fuzzer is happy because
+  // what is gone is not in the table it reads.
   // The diagnostic carries the way out, filled in for the route it is about. A
   // reader of the red has one edit to make and should be able to copy it: an
   // implementation that names the input without showing the line sends them to
@@ -373,7 +389,7 @@ describe("the routes the base ref served", () => {
     ["an object", "{}", "the top level is an object"],
     ["a list of something else", '["GET /health"]', 'which is not a {"method","path"} pair'],
   ])("a base snapshot that is %s is refused rather than read as empty", async (_, at, detail) => {
-    expect(drive({ at, committed: SERVED, served: SERVED })).rejects.toThrow(detail);
+    await expect(drive({ at, committed: SERVED, served: SERVED })).rejects.toThrow(detail);
   });
 
   // The one state that must not read as an honest pass. A checkout with no
@@ -446,7 +462,7 @@ describe("the routes the base ref served", () => {
 
   test("the manifest deciding all of this is refused rather than read as dev", async () => {
     const { root } = await history({}, {});
-    expect(
+    await expect(
       routeCompat({
         root,
         event: { baseRef: "", before: "" },
@@ -487,7 +503,7 @@ describe("retiring a route deliberately", () => {
     ]);
   });
 
-  // The same rot the ramp's allowlist is held to: an entry naming a route the
+  // The same rot the fuzzer's allowlist is held to: an entry naming a route the
   // base ref never served waives nothing and is left behind by whoever wrote it.
   test("an entry naming a route the base ref did not serve is refused", async () => {
     const { verdict, at } = await drive({

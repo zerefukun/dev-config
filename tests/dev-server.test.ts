@@ -1,18 +1,19 @@
 /**
  * The dev-server CLI, against real git worktrees and real detached processes.
  *
- * Real time is spent here on purpose and it is the one suite in this repo that
- * has to: what is being graded is a child process reaching a listening socket, a
- * signal reaching a process group, and two invocations racing each other, none
- * of which any injected clock has a part in. Every wait is bounded by
+ * Real time is spent here on purpose: what is being graded is a child process
+ * reaching a listening socket, a signal reaching a process group, and two
+ * invocations racing each other, none of which any injected clock has a part
+ * in. Every wait is bounded by
  * `DEV_SERVER_READY_TIMEOUT_MS`, which the fixture sets on every invocation —
  * twenty seconds where a server is meant to come up, two where the case is about
  * one that never does.
  */
-import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { describe, expect, test } from "bun:test";
+import { existsSync } from "node:fs";
 import { mkdtemp, readFile, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 
 import {
   basePort,
@@ -22,17 +23,24 @@ import {
   PORT_FLOOR,
   PORTS_PER_WORKTREE,
   recordStem,
+  type Server,
   worktreeSlug,
 } from "../dev-server-derive.ts";
-import { lock } from "../file-lock.ts";
 import {
   answers,
+  BRANCHES,
   bystander,
+  claimBlocks,
+  EPHEMERAL_FLOOR,
   EXITS_AT_ONCE,
   holderOf,
+  IGNORES_SIGTERM,
   killBehindItsBack,
+  killLeaderAlone,
+  LETS_GO_OF_ITS_PORT,
   NEVER_BINDS,
   occupy,
+  reclaim,
   running,
   scratchRepo,
   SERVES,
@@ -40,38 +48,9 @@ import {
   settled,
   settles,
   stays,
+  unreaped,
 } from "./dev-server-fixture.ts";
-
-/** Long enough for `bun run dev` to boot a fixture server, short enough to fail a hung suite. */
-const CASE_MS = 60_000;
-
-/**
- * One run of this suite at a time per machine, because two concurrent runs
- * collide: two runs of one checkout share every fixture, and runs of two
- * checkouts, whose 33 port blocks each are names hashed into one of 4000, share
- * a block in one pair of checkouts in five (measured over 20,000 pairs), where
- * `up` probing a port free races the other run's server binding it. The path
- * carries no checkout, so every checkout waits on the same lock.
- */
-const SUITE_LOCK = join(tmpdir(), "dev-config-dev-server-suite.lock");
-
-/**
- * How long a run waits for the one holding the lock, which takes about fifteen
- * seconds when nothing hangs. The hook outlasts it so the lock's own refusal,
- * naming the holder, is what the log shows.
- */
-const SUITE_PATIENCE_MS = 600_000;
-
-let release = async (): Promise<void> => {};
-
-beforeAll(async () => {
-  const held = await lock(SUITE_LOCK, SUITE_PATIENCE_MS);
-  release = async () => await held[Symbol.asyncDispose]();
-}, SUITE_PATIENCE_MS + CASE_MS);
-
-afterAll(async () => {
-  await release();
-});
+import { besideAHiddenProcess, runningIn } from "./proc-reading.ts";
 
 /** A worktree on a branch, as the two derivations take one. */
 const named = (worktree: string, branch: string) => ({ worktree, branch, detached: false });
@@ -174,727 +153,813 @@ describe("the derivation", () => {
 });
 
 describe("up", () => {
-  test(
-    "gives each worktree its own port, and each answers on it",
-    async () => {
-      // The wrong implementation is the one every repo has today: one hardcoded
-      // port, so the second worktree either fails to bind or serves the first
-      // one's code. This also kills an `up` that prints a URL before the server
-      // answers — the fetch below is made the moment `up` returns.
-      await using scratch = await scratchRepo(SERVES);
-      const feature = await scratch.worktree("feature");
+  test("gives each worktree its own port, and each answers on it", async () => {
+    // The wrong implementation is the one every repo has today: one hardcoded
+    // port, so the second worktree either fails to bind or serves the first
+    // one's code. This also kills an `up` that prints a URL before the server
+    // answers — the fetch below is made the moment `up` returns.
+    await using scratch = await scratchRepo(SERVES);
+    const feature = await scratch.worktree("feature");
 
-      const first = await scratch.devServer(scratch.root, "up");
-      const second = await scratch.devServer(feature, "up");
+    const first = await scratch.devServer(scratch.root, "up");
+    const second = await scratch.devServer(feature, "up");
 
-      expect(first.code).toBe(0);
-      expect(second.code).toBe(0);
-      const main = await scratch.record("main");
-      const other = await scratch.record("feature");
-      expect(first.stdout.trim()).toBe(`http://127.0.0.1:${main.port}`);
-      expect(second.stdout.trim()).toBe(`http://127.0.0.1:${other.port}`);
-      expect(main.port).not.toBe(other.port);
-      expect(await answers(main.port)).toBe(true);
-      expect(await answers(other.port)).toBe(true);
-    },
-    CASE_MS,
-  );
+    expect(first.code).toBe(0);
+    expect(second.code).toBe(0);
+    const main = await scratch.record("main");
+    const other = await scratch.record("feature");
+    expect(first.stdout.trim()).toBe(`http://127.0.0.1:${main.port}`);
+    expect(second.stdout.trim()).toBe(`http://127.0.0.1:${other.port}`);
+    expect(main.port).not.toBe(other.port);
+    expect(await answers(main.port)).toBe(true);
+    expect(await answers(other.port)).toBe(true);
+  });
 
-  test(
-    "keeps two worktrees apart when their branches reduce to one name",
-    async () => {
-      // The whole of the identity collision, end to end. Before the record was
-      // keyed on the worktree, `feat/x` and `feat-x` shared one record and one
-      // port: `up` in the second printed the first's URL, `status` showed one
-      // server, and `down` in the second killed the first's.
-      await using scratch = await scratchRepo(SERVES);
-      const one = await scratch.worktree("feat/x");
-      const two = await scratch.worktree("feat-x");
+  test("keeps two worktrees apart when their branches reduce to one name", async () => {
+    // The whole of the identity collision, end to end. Before the record was
+    // keyed on the worktree, `feat/x` and `feat-x` shared one record and one
+    // port: `up` in the second printed the first's URL, `status` showed one
+    // server, and `down` in the second killed the first's.
+    await using scratch = await scratchRepo(SERVES);
+    const one = await scratch.worktree("feat/x");
+    const two = await scratch.worktree("feat-x");
 
-      const first = await scratch.devServer(one, "up");
-      const second = await scratch.devServer(two, "up");
+    const first = await scratch.devServer(one, "up");
+    const second = await scratch.devServer(two, "up");
 
-      expect(first.stdout.trim()).not.toBe(second.stdout.trim());
-      const kept = await scratch.record("feat/x");
-      const doomed = await scratch.record("feat-x");
-      expect(kept.worktree).toBe(one);
-      expect(doomed.worktree).toBe(two);
-      const listed = await scratch.devServer(scratch.root, "status");
-      expect(listed.stdout).toContain(one);
-      expect(listed.stdout).toContain(two);
+    expect(first.stdout.trim()).not.toBe(second.stdout.trim());
+    const kept = await scratch.record("feat/x");
+    const doomed = await scratch.record("feat-x");
+    expect(kept.worktree).toBe(one);
+    expect(doomed.worktree).toBe(two);
+    const listed = await scratch.devServer(scratch.root, "status");
+    expect(listed.stdout).toContain(one);
+    expect(listed.stdout).toContain(two);
 
-      await scratch.devServer(two, "down");
+    await scratch.devServer(two, "down");
 
-      expect(running(kept.pid)).toBe(true);
-      expect(await answers(kept.port)).toBe(true);
-      expect(await settles(async () => !(await answers(doomed.port)))).toBe(true);
-    },
-    CASE_MS,
-  );
+    expect(await running(kept.pid)).toBe(true);
+    expect(await answers(kept.port)).toBe(true);
+    expect(await settles(async () => !(await answers(doomed.port)))).toBe(true);
+  });
 
-  test(
-    "refuses a record that names another worktree",
-    async () => {
-      // A 32-bit tag is short enough to owe this check. Without it a collision is
-      // silent, and the command acts on a server in a checkout it is not standing
-      // in — which is the failure the tag exists to make unlikely, not impossible.
-      await using scratch = await scratchRepo(SERVES);
-      await scratch.devServer(scratch.root, "up");
-      const server = await scratch.record("main");
-      await scratch.putRecord(
-        "main",
-        JSON.stringify({ ...server, worktree: "/somewhere/else" }, null, 2),
-      );
+  test("refuses a record that names another worktree", async () => {
+    // A 32-bit tag is short enough to owe this check. Without it a collision is
+    // silent, and the command acts on a server in a checkout it is not standing
+    // in — which is the failure the tag exists to make unlikely, not impossible.
+    await using scratch = await scratchRepo(SERVES);
+    await scratch.devServer(scratch.root, "up");
+    const server = await scratch.record("main");
+    await scratch.putRecord(
+      "main",
+      JSON.stringify({ ...server, worktree: "/somewhere/else" }, null, 2),
+    );
 
-      const refusedUp = await scratch.devServer(scratch.root, "up");
-      const refusedDown = await scratch.devServer(scratch.root, "down");
+    const refusedUp = await scratch.devServer(scratch.root, "up");
+    const refusedDown = await scratch.devServer(scratch.root, "down");
 
-      for (const refused of [refusedUp, refusedDown]) {
-        expect(refused.code).toBe(1);
-        expect(refused.stderr).toContain("/somewhere/else");
-      }
-      expect(running(server.pid)).toBe(true);
-    },
-    CASE_MS,
-  );
-
-  test(
-    "waits while another `up` holds this worktree, and takes a lock nobody holds",
-    async () => {
-      // The deterministic half of the exclusion. Without a lock consulted at all,
-      // `up` starts a server while another one is mid-flight in the same
-      // worktree; with a lock nobody can release, a worktree can never be started
-      // again — so a holder that is gone has to be stepped over rather than
-      // waited on, and both halves are asserted here rather than raced for.
-      await using scratch = await scratchRepo(SERVES);
-      using holder = await bystander();
-      await scratch.putLock("main", JSON.stringify(await holderOf(holder.pid)));
-
-      const pending = scratch.devServer(scratch.root, "up");
-      const waited = await stays(async () => (await scratch.recordOrNull("main")) === null);
-      await rm(scratch.paths("main").lock, { force: true });
-      const started = await pending;
-
-      expect(waited).toBe(true);
-      expect(started.code).toBe(0);
-
-      await scratch.devServer(scratch.root, "down");
-      const gone = await bystander();
-      const stale = await holderOf(gone.pid);
-      killBehindItsBack(gone.pid);
-      expect(await settles(() => !running(stale.pid))).toBe(true);
-      await scratch.putLock("main", JSON.stringify(stale));
-
-      const stolen = await scratch.devServer(scratch.root, "up");
-
-      expect(stolen.code).toBe(0);
-      expect(stolen.stdout.trim()).toBe(started.stdout.trim());
-    },
-    CASE_MS,
-  );
-
-  test(
-    "says a dev script exited rather than waiting out the clock for it",
-    async () => {
-      // Readiness that only watches the port and the deadline reports "did not
-      // answer" after the full timeout for a script that died on its first line —
-      // the timeout being the only thing that ever ends the wait. Watching the
-      // child ends it at the moment there is something to say.
-      await using scratch = await scratchRepo(EXITS_AT_ONCE);
-
-      const failed = await scratch.devServer(scratch.root, "up");
-
-      expect(failed.code).toBe(1);
-      expect(failed.stderr).toContain("exited before it");
-      expect(failed.stderr).not.toContain("did not answer");
-      expect(failed.stderr).toContain("boom: the dev script could not start");
-      expect(await scratch.recordOrNull("main")).toBeNull();
-    },
-    CASE_MS,
-  );
-
-  test(
-    "two `up`s racing in one worktree leave exactly one server",
-    async () => {
-      // The end-to-end shape of it: two people, or an agent and a person, running
-      // `up` at once. Measured before the lock, five concurrent pairs each left
-      // two servers on two ports with one record between them. The window is
-      // narrow enough now that this case cannot be relied on to open it — the
-      // case above is the deterministic one — so what this pins is the outcome:
-      // one agreed URL and one spawn.
-      await using scratch = await scratchRepo(SERVES);
-
-      const [first, second] = await scratch.devServerRace(scratch.root, "up");
-
-      expect(first.code).toBe(0);
-      expect(second.code).toBe(0);
-      expect(first.stdout.trim()).toBe(second.stdout.trim());
-      const server = await scratch.record("main");
-      // One spawn, counted where a spawn is written down. Reading the block for
-      // listeners would answer the same question and give a foreign process on a
-      // neighbouring port a vote in it.
-      const log = await readFile(server.log, "utf8");
-      expect(log.match(/=== dev-server up /g)).toHaveLength(1);
-      expect(await answers(server.port)).toBe(true);
-    },
-    CASE_MS,
-  );
-
-  test(
-    "writes down everything another command needs to find the process again",
-    async () => {
-      // The record is the whole of this tool's memory: a field missing from it is
-      // a server nothing can stop, and a wrong `worktree` is a record `sweep`
-      // either never collects or collects while its worktree is still there.
-      await using scratch = await scratchRepo(SERVES);
-      await scratch.devServer(scratch.root, "up");
-
-      const record = await scratch.record("main");
-      expect(record.worktree).toBe(scratch.root);
-      expect(record.branch).toBe("main");
-      expect(record.packageName).toMatch(/^dev-server-fixture-/);
-      expect(record.log).toBe(scratch.paths("main").log);
-      // The port written down is the one the server answers on, somewhere in
-      // the block the worktree's name picks. The base of that block is not the
-      // answer: `up` takes the next port of the block when the base is held, and
-      // on a shared box another suite's server can be holding it.
-      expect(inBlock(basePort(record.packageName, named(scratch.root, "main")), record.port)).toBe(
-        true,
-      );
-      expect(await answers(record.port)).toBe(true);
-      expect(record.bootId).toBe(
-        (await readFile("/proc/sys/kernel/random/boot_id", "utf8")).trim(),
-      );
-      expect(record.startTicks).toBeGreaterThan(0);
-      expect(running(record.pid)).toBe(true);
-      expect(Date.parse(record.startedAt)).toBeGreaterThan(0);
-      // The log holds whatever the dev script printed, and the child was handed
-      // the whole environment with both streams pointed here: a stack trace with
-      // a connection string in it must not be world-readable inside `.git`.
-      expect((await stat(record.log)).mode & 0o777).toBe(0o600);
-      expect((await stat(scratch.state)).mode & 0o777).toBe(0o700);
-      expect((await stat(scratch.paths("main").record)).mode & 0o777).toBe(0o600);
-    },
-    CASE_MS,
-  );
-
-  test(
-    "hands the dev script every name it promises, and only loopback",
-    async () => {
-      // The wrong implementation drops one of the four. Nothing in the repo's own
-      // `dev` script would fail — it would simply run on a port or an origin the
-      // CLI never told it about, which is a URL that is right by luck.
-      await using scratch = await scratchRepo(SERVES);
-      await scratch.devServer(scratch.root, "up");
-
-      const server = await scratch.record("main");
-      const log = await readFile(server.log, "utf8");
-      expect(log).toContain(`fixture PORT=${server.port}`);
-      expect(log).toContain(`fixture DEV_PORT=${server.port}`);
-      expect(log).toContain("fixture HOST=127.0.0.1");
-      expect(log).toContain(`fixture SITE_URL=http://127.0.0.1:${server.port}`);
-    },
-    CASE_MS,
-  );
-
-  test(
-    "stops a dev script that binds every interface instead of $HOST",
-    async () => {
-      // `HOST` is a request. A dev script that binds 0.0.0.0 answers on every
-      // address this machine has — a colleague's laptop on the same LAN, a
-      // WireGuard peer — while `status` calls it healthy. Proven before this
-      // check existed: reachable on the tunnel address.
-      await using scratch = await scratchRepo(SERVES_EVERYWHERE);
-
-      const refused = await scratch.devServer(scratch.root, "up");
-
+    for (const refused of [refusedUp, refusedDown]) {
       expect(refused.code).toBe(1);
-      expect(refused.stderr).toContain("binding every interface");
-      expect(await scratch.recordOrNull("main")).toBeNull();
-    },
-    CASE_MS,
-  );
+      expect(refused.stderr).toContain("/somewhere/else");
+    }
+    expect(await running(server.pid)).toBe(true);
+  });
 
-  test(
-    "is a no-op while the server is answering",
-    async () => {
-      // The wrong implementation spawns anyway. The first child keeps the port,
-      // the second cannot bind it, and the record now names a process that is not
-      // the one serving — so `down` leaves a server running.
-      await using scratch = await scratchRepo(SERVES);
-      const started = await scratch.devServer(scratch.root, "up");
-      const before = await scratch.record("main");
+  test("waits while another `up` holds this worktree, and takes a lock nobody holds", async () => {
+    // The deterministic half of the exclusion. Without a lock consulted at all,
+    // `up` starts a server while another one is mid-flight in the same
+    // worktree; with a lock nobody can release, a worktree can never be started
+    // again — so a holder that is gone has to be stepped over rather than
+    // waited on, and both halves are asserted here rather than raced for.
+    await using scratch = await scratchRepo(SERVES);
+    using holder = await bystander();
+    await scratch.putLock("main", JSON.stringify(await holderOf(holder.pid)));
 
-      const again = await scratch.devServer(scratch.root, "up");
+    const pending = scratch.devServer(scratch.root, "up");
+    const waited = await stays(async () => (await scratch.recordOrNull("main")) === null);
+    await rm(scratch.paths("main").lock, { force: true });
+    const started = await pending;
 
-      expect(again.code).toBe(0);
-      expect(again.stdout).toBe(started.stdout);
-      expect((await scratch.record("main")).pid).toBe(before.pid);
-    },
-    CASE_MS,
-  );
+    expect(waited).toBe(true);
+    expect(started.code).toBe(0);
 
-  test(
-    "comes back to the same port after a stop",
-    async () => {
-      // The wrong implementation probes for a free port every time. It works, and
-      // it silently breaks the one property the derivation exists for: a
-      // bookmark, or a printed URL, is still this worktree's tomorrow.
-      await using scratch = await scratchRepo(SERVES);
-      const first = await scratch.devServer(scratch.root, "up");
-      await scratch.devServer(scratch.root, "down");
+    await scratch.devServer(scratch.root, "down");
+    const gone = await bystander();
+    const stale = await holderOf(gone.pid);
+    killBehindItsBack(gone.pid);
+    expect(await settles(async () => !(await running(stale.pid)))).toBe(true);
+    await scratch.putLock("main", JSON.stringify(stale));
 
-      const second = await scratch.devServer(scratch.root, "up");
+    const stolen = await scratch.devServer(scratch.root, "up");
 
-      expect(second.stdout.trim()).toBe(first.stdout.trim());
-    },
-    CASE_MS,
-  );
+    expect(stolen.code).toBe(0);
+    expect(stolen.stdout.trim()).toBe(started.stdout.trim());
+  });
 
-  test(
-    "restarts cleanly after the server is killed behind its back",
-    async () => {
-      // The wrong implementation trusts the record: it reads a pid, believes the
-      // server is up, and prints a URL nothing answers on. `status` has the same
-      // bug from the other side if it reports a record's existence as liveness.
-      await using scratch = await scratchRepo(SERVES);
-      await scratch.devServer(scratch.root, "up");
-      const before = await scratch.record("main");
-      killBehindItsBack(before.pid);
-      expect(await settles(() => !running(before.pid))).toBe(true);
+  test("says a dev script exited rather than waiting out the clock for it", async () => {
+    // Readiness that only watches the port and the deadline reports "did not
+    // answer" after the full timeout for a script that died on its first line —
+    // the timeout being the only thing that ever ends the wait. Watching the
+    // child ends it at the moment there is something to say.
+    await using scratch = await scratchRepo(EXITS_AT_ONCE);
 
-      const dead = await scratch.devServer(scratch.root, "status");
-      const restarted = await scratch.devServer(scratch.root, "up");
+    const failed = await scratch.devServer(scratch.root, "up");
 
-      expect(dead.stdout).toContain("dead");
-      expect(dead.stdout).toContain("silent");
-      expect(restarted.code).toBe(0);
-      const after = await scratch.record("main");
-      expect(after.port).toBe(before.port);
-      expect(after.pid).not.toBe(before.pid);
-      expect(await answers(after.port)).toBe(true);
-    },
-    CASE_MS,
-  );
+    expect(failed.code).toBe(1);
+    expect(failed.stderr).toContain("exited before it");
+    expect(failed.stderr).not.toContain("did not answer");
+    expect(failed.stderr).toContain("boom: the dev script could not start");
+    expect(await scratch.recordOrNull("main")).toBeNull();
+  });
 
-  test(
-    "refuses a claimed port somebody else is listening on, rather than moving",
-    async () => {
-      // The wrong implementation falls forward to the next free port. `up` keeps
-      // working, and the worktree's URL has quietly changed — which is the
-      // property the case above is about, broken by the recovery path instead.
-      await using scratch = await scratchRepo(SERVES);
-      await scratch.devServer(scratch.root, "up");
-      const before = await scratch.record("main");
-      killBehindItsBack(before.pid);
-      expect(await settles(async () => !(await answers(before.port)))).toBe(true);
+  test("two `up`s racing in one worktree leave exactly one server", async () => {
+    // The end-to-end shape of it: two people, or an agent and a person, running
+    // `up` at once. Measured before the lock, five concurrent pairs each left
+    // two servers on two ports with one record between them. The window is
+    // narrow enough now that this case cannot be relied on to open it — the
+    // case above is the deterministic one — so what this pins is the outcome:
+    // one agreed URL and one spawn.
+    await using scratch = await scratchRepo(SERVES);
 
-      using foreign = occupy(before.port);
-      expect(foreign).toBeDefined();
-      const refused = await scratch.devServer(scratch.root, "up");
+    const [first, second] = await scratch.devServerRace(scratch.root, "up");
 
-      expect(refused.code).toBe(1);
-      expect(refused.stdout).toBe("");
-      expect(refused.stderr).toContain(String(before.port));
-      expect(refused.stderr).toContain("lsof");
-      expect((await scratch.record("main")).port).toBe(before.port);
-    },
-    CASE_MS,
-  );
+    expect(first.code).toBe(0);
+    expect(second.code).toBe(0);
+    expect(first.stdout.trim()).toBe(second.stdout.trim());
+    const server = await scratch.record("main");
+    // One spawn, counted where a spawn is written down. Reading the block for
+    // listeners would answer the same question and give a foreign process on a
+    // neighbouring port a vote in it.
+    const log = await readFile(server.log, "utf8");
+    expect(log.match(/=== dev-server up /g)).toHaveLength(1);
+    expect(await answers(server.port)).toBe(true);
+  });
 
-  test(
-    "gives up on a dev script that never answers, and leaves nothing running",
-    async () => {
-      // The wrong implementation waits forever, or gives up and walks away from
-      // the child — which then holds the port, so every later `up` in this
-      // worktree refuses a port nothing will ever answer on.
-      await using scratch = await scratchRepo(NEVER_BINDS, 2000);
-      const pending = scratch.devServer(scratch.root, "up");
-      const started = await settled(async () => await scratch.recordOrNull("main"));
+  test("writes down everything another command needs to find the process again", async () => {
+    // The record is the whole of this tool's memory: a field missing from it is
+    // a server nothing can stop, and a wrong `worktree` is a record `sweep`
+    // either never collects or collects while its worktree is still there.
+    await using scratch = await scratchRepo(SERVES);
+    await scratch.devServer(scratch.root, "up");
 
-      const timedOut = await pending;
+    const record = await scratch.record("main");
+    expect(record.worktree).toBe(scratch.root);
+    expect(record.branch).toBe("main");
+    expect(record.packageName).toMatch(/^dev-server-fixture-/);
+    expect(record.log).toBe(scratch.paths("main").log);
+    // The port written down is the one the server answers on, somewhere in
+    // the block the worktree's name picks. The base of that block is not the
+    // answer: `up` takes the next port of the block when the base is held, and
+    // on a shared box another suite's server can be holding it.
+    expect(inBlock(basePort(record.packageName, named(scratch.root, "main")), record.port)).toBe(
+      true,
+    );
+    expect(await answers(record.port)).toBe(true);
+    expect(record.bootId).toBe((await readFile("/proc/sys/kernel/random/boot_id", "utf8")).trim());
+    expect(record.startTicks).toBeGreaterThan(0);
+    expect(await running(record.pid)).toBe(true);
+    expect(Date.parse(record.startedAt)).toBeGreaterThan(0);
+    // The log holds whatever the dev script printed, and the child was handed
+    // the whole environment with both streams pointed here: a stack trace with
+    // a connection string in it must not be world-readable inside `.git`.
+    expect((await stat(record.log)).mode & 0o777).toBe(0o600);
+    expect((await stat(scratch.state)).mode & 0o777).toBe(0o700);
+    expect((await stat(scratch.paths("main").record)).mode & 0o777).toBe(0o600);
+  });
 
-      expect(timedOut.code).toBe(1);
-      expect(timedOut.stderr).toContain("did not answer");
-      expect(timedOut.stderr).toContain("binding nothing");
-      expect(await scratch.recordOrNull("main")).toBeNull();
-      // And the child is gone, not merely unrecorded. Reading the log before
-      // stopping it — the order this once had — leaves a server running whenever
-      // that read fails, with nothing left that names it.
-      expect(await settles(() => !running(started.pid))).toBe(true);
-    },
-    CASE_MS,
-  );
+  test("hands the dev script every name it promises, and only loopback", async () => {
+    // The wrong implementation drops one of the four. Nothing in the repo's own
+    // `dev` script would fail — it would simply run on a port or an origin the
+    // CLI never told it about, which is a URL that is right by luck.
+    await using scratch = await scratchRepo(SERVES);
+    await scratch.devServer(scratch.root, "up");
 
-  test(
-    "reads the readiness timeout before it starts anything",
-    async () => {
-      // Parsed inside the wait, it was parsed after the spawn: an unreadable
-      // value exited 1 having left a server running and recorded, which is the
-      // one end state this tool exists to prevent.
-      await using scratch = await scratchRepo(SERVES);
-      const proc = Bun.spawn([process.execPath, "run", "dev-server", "up"], {
-        cwd: scratch.root,
-        env: { ...process.env, DEV_SERVER_READY_TIMEOUT_MS: "abc" },
-        stdin: "ignore",
-        stdout: "pipe",
-        stderr: "pipe",
-      });
-      const stderr = await new Response(proc.stderr).text();
+    const server = await scratch.record("main");
+    const log = await readFile(server.log, "utf8");
+    expect(log).toContain(`fixture PORT=${server.port}`);
+    expect(log).toContain(`fixture DEV_PORT=${server.port}`);
+    expect(log).toContain("fixture HOST=127.0.0.1");
+    expect(log).toContain(`fixture SITE_URL=http://127.0.0.1:${server.port}`);
+  });
 
-      expect(await proc.exited).toBe(1);
-      expect(stderr).toContain("DEV_SERVER_READY_TIMEOUT_MS");
-      expect(await scratch.recordOrNull("main")).toBeNull();
-    },
-    CASE_MS,
-  );
+  test("stops a dev script that binds every interface instead of $HOST", async () => {
+    // `HOST` is a request. A dev script that binds 0.0.0.0 answers on every
+    // address this machine has — a colleague's laptop on the same LAN, a
+    // WireGuard peer — while `status` calls it healthy. Proven before this
+    // check existed: reachable on the tunnel address.
+    await using scratch = await scratchRepo(SERVES_EVERYWHERE);
+
+    const refused = await scratch.devServer(scratch.root, "up");
+
+    expect(refused.code).toBe(1);
+    expect(refused.stderr).toContain("binding every interface");
+    expect(await scratch.recordOrNull("main")).toBeNull();
+  });
+
+  test("is a no-op while the server is answering", async () => {
+    // The wrong implementation spawns anyway. The first child keeps the port,
+    // the second cannot bind it, and the record now names a process that is not
+    // the one serving — so `down` leaves a server running.
+    await using scratch = await scratchRepo(SERVES);
+    const started = await scratch.devServer(scratch.root, "up");
+    const before = await scratch.record("main");
+
+    const again = await scratch.devServer(scratch.root, "up");
+
+    expect(again.code).toBe(0);
+    expect(again.stdout).toBe(started.stdout);
+    expect((await scratch.record("main")).pid).toBe(before.pid);
+  });
+
+  test("comes back to the same port after a stop", async () => {
+    // The wrong implementation probes for a free port every time. It works, and
+    // it silently breaks the one property the derivation exists for: a
+    // bookmark, or a printed URL, is still this worktree's tomorrow.
+    await using scratch = await scratchRepo(SERVES);
+    const first = await scratch.devServer(scratch.root, "up");
+    await scratch.devServer(scratch.root, "down");
+
+    const second = await scratch.devServer(scratch.root, "up");
+
+    expect(second.stdout.trim()).toBe(first.stdout.trim());
+  });
+
+  test("restarts cleanly after the server is killed behind its back", async () => {
+    // The wrong implementation trusts the record: it reads a pid, believes the
+    // server is up, and prints a URL nothing answers on. `status` has the same
+    // bug from the other side if it reports a record's existence as liveness.
+    await using scratch = await scratchRepo(SERVES);
+    await scratch.devServer(scratch.root, "up");
+    const before = await scratch.record("main");
+    killBehindItsBack(before.pid);
+    expect(await settles(async () => !(await running(before.pid)))).toBe(true);
+
+    const dead = await scratch.devServer(scratch.root, "status");
+    const restarted = await scratch.devServer(scratch.root, "up");
+
+    expect(dead.stdout).toContain("dead");
+    expect(dead.stdout).toContain("silent");
+    expect(restarted.code).toBe(0);
+    const after = await scratch.record("main");
+    expect(after.port).toBe(before.port);
+    expect(after.pid).not.toBe(before.pid);
+    expect(await answers(after.port)).toBe(true);
+  });
+
+  test("refuses a claimed port somebody else is listening on, rather than moving", async () => {
+    // The wrong implementation falls forward to the next free port. `up` keeps
+    // working, and the worktree's URL has quietly changed — which is the
+    // property the case above is about, broken by the recovery path instead.
+    await using scratch = await scratchRepo(SERVES);
+    await scratch.devServer(scratch.root, "up");
+    const before = await scratch.record("main");
+    killBehindItsBack(before.pid);
+    expect(await settles(async () => !(await answers(before.port)))).toBe(true);
+
+    using foreign = occupy(before.port);
+    expect(foreign).toBeDefined();
+    const refused = await scratch.devServer(scratch.root, "up");
+
+    expect(refused.code).toBe(1);
+    expect(refused.stdout).toBe("");
+    expect(refused.stderr).toContain(String(before.port));
+    expect(refused.stderr).toContain("lsof");
+    expect((await scratch.record("main")).port).toBe(before.port);
+  });
+
+  test("gives up on a dev script that never answers, and leaves nothing running", async () => {
+    // The wrong implementation waits forever, or gives up and walks away from
+    // the child — which then holds the port, so every later `up` in this
+    // worktree refuses a port nothing will ever answer on.
+    await using scratch = await scratchRepo(NEVER_BINDS, 2000);
+    const pending = scratch.devServer(scratch.root, "up");
+    const started = await settled(async () => await scratch.recordOrNull("main"));
+
+    const timedOut = await pending;
+
+    expect(timedOut.code).toBe(1);
+    expect(timedOut.stderr).toContain("did not answer");
+    expect(timedOut.stderr).toContain("binding nothing");
+    expect(await scratch.recordOrNull("main")).toBeNull();
+    // And the child is gone, not merely unrecorded. Reading the log before
+    // stopping it — the order this once had — leaves a server running whenever
+    // that read fails, with nothing left that names it.
+    expect(await settles(async () => !(await running(started.pid)))).toBe(true);
+  });
+
+  test("reads the readiness timeout before it starts anything", async () => {
+    // Parsed inside the wait, it was parsed after the spawn: an unreadable
+    // value exited 1 having left a server running and recorded, which is the
+    // one end state this tool exists to prevent.
+    await using scratch = await scratchRepo(SERVES);
+    const proc = Bun.spawn([process.execPath, "run", "dev-server", "up"], {
+      cwd: scratch.root,
+      env: { ...process.env, DEV_SERVER_READY_TIMEOUT_MS: "abc" },
+      stdin: "ignore",
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const stderr = await new Response(proc.stderr).text();
+
+    expect(await proc.exited).toBe(1);
+    expect(stderr).toContain("DEV_SERVER_READY_TIMEOUT_MS");
+    expect(await scratch.recordOrNull("main")).toBeNull();
+  });
 });
 
 describe("what a record is allowed to make this tool do", () => {
-  test(
-    "never signals a pid that is not the process it started",
-    async () => {
-      // The record is the input to a `kill` on a process GROUP. A pid is reused,
-      // and a reboot recycles every one of them at once — so a record carried
-      // across either names somebody else's processes, and `down` reported
-      // success having killed them. The boot id and the start tick are what make
-      // that answerable.
-      await using scratch = await scratchRepo(SERVES);
-      using innocent = await bystander();
-      await scratch.devServer(scratch.root, "up");
-      const server = await scratch.record("main");
-      await scratch.putRecord(
-        "main",
-        JSON.stringify(
-          { ...server, pid: innocent.pid, startTicks: server.startTicks + 1 },
-          null,
-          2,
-        ),
-      );
+  test("never signals a pid that is not the process it started", async () => {
+    // The record is the input to a `kill` on a process GROUP. A pid is reused,
+    // and a reboot recycles every one of them at once — so a record carried
+    // across either names somebody else's processes, and `down` reported
+    // success having killed them. The boot id and the start tick are what make
+    // that answerable.
+    await using scratch = await scratchRepo(SERVES);
+    using innocent = await bystander();
+    await scratch.devServer(scratch.root, "up");
+    const server = await scratch.record("main");
+    await scratch.putRecord(
+      "main",
+      JSON.stringify({ ...server, pid: innocent.pid, startTicks: server.startTicks + 1 }, null, 2),
+    );
+
+    const listed = await scratch.devServer(scratch.root, "status");
+    const stopped = await scratch.devServer(scratch.root, "down");
+
+    expect(listed.stdout).toContain("dead");
+    expect(stopped.code).toBe(0);
+    expect(stopped.stderr).toContain("already gone");
+    expect(await running(innocent.pid)).toBe(true);
+    expect(await scratch.recordOrNull("main")).toBeNull();
+    killBehindItsBack(server.pid);
+  });
+
+  test("treats a record from another boot as naming nobody", async () => {
+    // Every record on a machine survives its reboot, and every pid in one is
+    // then somebody else's. Nothing about the file says so; the boot id does.
+    await using scratch = await scratchRepo(SERVES);
+    using innocent = await bystander();
+    await scratch.devServer(scratch.root, "up");
+    const server = await scratch.record("main");
+    await scratch.putRecord(
+      "main",
+      JSON.stringify(
+        { ...server, pid: innocent.pid, bootId: "00000000-0000-0000-0000-000000000000" },
+        null,
+        2,
+      ),
+    );
+
+    const stopped = await scratch.devServer(scratch.root, "down");
+
+    expect(stopped.stderr).toContain("already gone");
+    expect(await running(innocent.pid)).toBe(true);
+    killBehindItsBack(server.pid);
+  });
+
+  test("refuses a pid or a port no derivation of this tool could have produced", async () => {
+    // `0` is the caller's own process group and `1` is every process the user
+    // may signal; a decoder that only asked "is it a number" would hand either
+    // to `kill`. A port outside the derived range did not come from here at all.
+    await using scratch = await scratchRepo(SERVES);
+    const template = {
+      worktree: scratch.root,
+      branch: "main",
+      packageName: "x",
+      port: 30_000,
+      pid: 2,
+      bootId: "b",
+      startTicks: 1,
+      log: scratch.paths("main").log,
+      startedAt: new Date().toISOString(),
+    };
+    for (const broken of [
+      { pid: 0 },
+      { pid: 1 },
+      { pid: -1 },
+      { pid: 1.5 },
+      { port: 80 },
+      { port: 70_000 },
+    ]) {
+      await scratch.putRecord("main", JSON.stringify({ ...template, ...broken }, null, 2));
 
       const listed = await scratch.devServer(scratch.root, "status");
-      const stopped = await scratch.devServer(scratch.root, "down");
 
-      expect(listed.stdout).toContain("dead");
-      expect(stopped.code).toBe(0);
-      expect(stopped.stderr).toContain("already gone");
-      expect(running(innocent.pid)).toBe(true);
-      expect(await scratch.recordOrNull("main")).toBeNull();
-      killBehindItsBack(server.pid);
-    },
-    CASE_MS,
-  );
+      expect(listed.stdout).toContain("junk");
+      expect(listed.stdout).toContain("not the shape");
+    }
+    expect(await running(process.pid)).toBe(true);
+  });
 
-  test(
-    "treats a record from another boot as naming nobody",
-    async () => {
-      // Every record on a machine survives its reboot, and every pid in one is
-      // then somebody else's. Nothing about the file says so; the boot id does.
-      await using scratch = await scratchRepo(SERVES);
-      using innocent = await bystander();
-      await scratch.devServer(scratch.root, "up");
-      const server = await scratch.record("main");
-      await scratch.putRecord(
-        "main",
-        JSON.stringify(
-          { ...server, pid: innocent.pid, bootId: "00000000-0000-0000-0000-000000000000" },
-          null,
-          2,
-        ),
-      );
+  test("does not let one unreadable record take every command down", async () => {
+    // A record truncated by a crash made `status`, `up`, `down`, `url` and
+    // `sweep` all exit 1 with "Failed to parse JSON" and no filename: the
+    // repository's whole tool, wedged by one file, with no hint which.
+    await using scratch = await scratchRepo(SERVES);
+    const feature = await scratch.worktree("feature");
+    await scratch.devServer(feature, "up");
+    const alive = await scratch.record("feature");
+    await scratch.putRecord("main", '{"worktree":"/half');
 
-      const stopped = await scratch.devServer(scratch.root, "down");
+    const listed = await scratch.devServer(scratch.root, "status");
+    const stopped = await scratch.devServer(scratch.root, "down");
+    const missing = await scratch.devServer(scratch.root, "url");
 
-      expect(stopped.stderr).toContain("already gone");
-      expect(running(innocent.pid)).toBe(true);
-      killBehindItsBack(server.pid);
-    },
-    CASE_MS,
-  );
+    expect(listed.stdout).toContain(scratch.paths("main").record);
+    expect(listed.stdout).toContain(String(alive.port));
+    expect(stopped.code).toBe(0);
+    expect(missing.code).toBe(1);
+    expect(missing.stderr).toContain(scratch.paths("main").record);
 
-  test(
-    "refuses a pid or a port no derivation of this tool could have produced",
-    async () => {
-      // `0` is the caller's own process group and `1` is every process the user
-      // may signal; a decoder that only asked "is it a number" would hand either
-      // to `kill`. A port outside the derived range did not come from here at all.
-      await using scratch = await scratchRepo(SERVES);
-      const template = {
-        worktree: scratch.root,
-        branch: "main",
-        packageName: "x",
-        port: 30_000,
-        pid: 2,
-        bootId: "b",
-        startTicks: 1,
-        log: scratch.paths("main").log,
-        startedAt: new Date().toISOString(),
-      };
-      for (const broken of [
-        { pid: 0 },
-        { pid: 1 },
-        { pid: -1 },
-        { pid: 1.5 },
-        { port: 80 },
-        { port: 70_000 },
-      ]) {
-        await scratch.putRecord("main", JSON.stringify({ ...template, ...broken }, null, 2));
+    const swept = await scratch.devServer(scratch.root, "sweep");
 
-        const listed = await scratch.devServer(scratch.root, "status");
-
-        expect(listed.stdout).toContain("junk");
-        expect(listed.stdout).toContain("not the shape");
-      }
-      expect(running(process.pid)).toBe(true);
-    },
-    CASE_MS,
-  );
-
-  test(
-    "does not let one unreadable record take every command down",
-    async () => {
-      // A record truncated by a crash made `status`, `up`, `down`, `url` and
-      // `sweep` all exit 1 with "Failed to parse JSON" and no filename: the
-      // repository's whole tool, wedged by one file, with no hint which.
-      await using scratch = await scratchRepo(SERVES);
-      const feature = await scratch.worktree("feature");
-      await scratch.devServer(feature, "up");
-      const alive = await scratch.record("feature");
-      await scratch.putRecord("main", '{"worktree":"/half');
-
-      const listed = await scratch.devServer(scratch.root, "status");
-      const stopped = await scratch.devServer(scratch.root, "down");
-      const missing = await scratch.devServer(scratch.root, "url");
-
-      expect(listed.stdout).toContain(scratch.paths("main").record);
-      expect(listed.stdout).toContain(String(alive.port));
-      expect(stopped.code).toBe(0);
-      expect(missing.code).toBe(1);
-      expect(missing.stderr).toContain(scratch.paths("main").record);
-
-      const swept = await scratch.devServer(scratch.root, "sweep");
-
-      expect(swept.code).toBe(0);
-      expect(await Bun.file(scratch.paths("main").record).exists()).toBe(false);
-      expect(await answers(alive.port)).toBe(true);
-    },
-    CASE_MS,
-  );
+    expect(swept.code).toBe(0);
+    expect(await Bun.file(scratch.paths("main").record).exists()).toBe(false);
+    expect(await answers(alive.port)).toBe(true);
+  });
 });
 
 describe("the other commands", () => {
-  test(
-    "url answers for this worktree, and exits 1 once nothing is up",
-    async () => {
-      // The wrong implementation prints whatever the record says. After `down`
-      // there is nothing to print, and a script piping this into a browser would
-      // open a port that is now somebody else's.
-      await using scratch = await scratchRepo(SERVES);
-      const started = await scratch.devServer(scratch.root, "up");
+  test("url answers for this worktree, and exits 1 once nothing is up", async () => {
+    // The wrong implementation prints whatever the record says. After `down`
+    // there is nothing to print, and a script piping this into a browser would
+    // open a port that is now somebody else's.
+    await using scratch = await scratchRepo(SERVES);
+    const started = await scratch.devServer(scratch.root, "up");
 
-      const up = await scratch.devServer(scratch.root, "url");
-      await scratch.devServer(scratch.root, "down");
-      const gone = await scratch.devServer(scratch.root, "url");
+    const up = await scratch.devServer(scratch.root, "url");
+    await scratch.devServer(scratch.root, "down");
+    const gone = await scratch.devServer(scratch.root, "url");
 
-      expect(up.code).toBe(0);
-      expect(up.stdout.trim()).toBe(started.stdout.trim());
-      expect(gone.code).toBe(1);
-      expect(gone.stdout).toBe("");
-    },
-    CASE_MS,
-  );
+    expect(up.code).toBe(0);
+    expect(up.stdout.trim()).toBe(started.stdout.trim());
+    expect(gone.code).toBe(1);
+    expect(gone.stdout).toBe("");
+  });
 
-  test(
-    "status reports every server the repository has, not just this worktree's",
-    async () => {
-      // The wrong implementation reads the current worktree's record only — which
-      // is exactly the state nobody can act on, because the server you have
-      // forgotten about is the one in the worktree you are not standing in.
-      await using scratch = await scratchRepo(SERVES);
-      const feature = await scratch.worktree("feature");
-      await scratch.devServer(scratch.root, "up");
-      await scratch.devServer(feature, "up");
+  test("status reports every server the repository has, not just this worktree's", async () => {
+    // The wrong implementation reads the current worktree's record only — which
+    // is exactly the state nobody can act on, because the server you have
+    // forgotten about is the one in the worktree you are not standing in.
+    await using scratch = await scratchRepo(SERVES);
+    const feature = await scratch.worktree("feature");
+    await scratch.devServer(scratch.root, "up");
+    await scratch.devServer(feature, "up");
 
-      const listed = await scratch.devServer(scratch.root, "status");
+    const listed = await scratch.devServer(scratch.root, "status");
 
-      const main = await scratch.record("main");
-      const other = await scratch.record("feature");
-      expect(listed.stdout).toContain(scratch.root);
-      expect(listed.stdout).toContain(feature);
-      for (const server of [main, other]) {
-        expect(listed.stdout).toContain(String(server.port));
-        expect(listed.stdout).toContain(String(server.pid));
-      }
-      expect(listed.stdout.match(/alive/g)).toHaveLength(2);
-      expect(listed.stdout.match(/answering/g)).toHaveLength(2);
-    },
-    CASE_MS,
-  );
+    const main = await scratch.record("main");
+    const other = await scratch.record("feature");
+    expect(listed.stdout).toContain(scratch.root);
+    expect(listed.stdout).toContain(feature);
+    for (const server of [main, other]) {
+      expect(listed.stdout).toContain(String(server.port));
+      expect(listed.stdout).toContain(String(server.pid));
+    }
+    expect(listed.stdout.match(/alive/g)).toHaveLength(2);
+    expect(listed.stdout.match(/answering/g)).toHaveLength(2);
+  });
 
-  test(
-    "logs prints this worktree's log and no other's",
-    async () => {
-      // The wrong implementation prints every log the repository has, the way
-      // `status` prints every record — so the one thing a person came here to
-      // read is buried under another worktree's. That the log is keyed by
-      // worktree at all is held by the record case above.
-      await using scratch = await scratchRepo(SERVES);
-      const feature = await scratch.worktree("feature");
-      await scratch.devServer(scratch.root, "up");
-      await scratch.devServer(feature, "up");
+  test("logs prints this worktree's log and no other's", async () => {
+    // The wrong implementation prints every log the repository has, the way
+    // `status` prints every record — so the one thing a person came here to
+    // read is buried under another worktree's. That the log is keyed by
+    // worktree at all is held by the record case above.
+    await using scratch = await scratchRepo(SERVES);
+    const feature = await scratch.worktree("feature");
+    await scratch.devServer(scratch.root, "up");
+    await scratch.devServer(feature, "up");
 
-      const mine = await scratch.devServer(feature, "logs");
+    const mine = await scratch.devServer(feature, "logs");
 
-      const other = await scratch.record("feature");
-      expect(mine.code).toBe(0);
-      expect(mine.stdout).toContain(`fixture serving on 127.0.0.1:${other.port}`);
-      expect(mine.stdout).not.toContain(`:${(await scratch.record("main")).port}`);
-    },
-    CASE_MS,
-  );
+    const other = await scratch.record("feature");
+    expect(mine.code).toBe(0);
+    expect(mine.stdout).toContain(`fixture serving on 127.0.0.1:${other.port}`);
+    expect(mine.stdout).not.toContain(`:${(await scratch.record("main")).port}`);
+  });
 
-  test(
-    "keeps the log of a run that failed on its first line",
-    async () => {
-      // The wrong implementation truncates the log at `up`, before the child is
-      // known to have started — so the run a person came to read about is
-      // destroyed by the next attempt to reproduce it.
-      await using scratch = await scratchRepo(NEVER_BINDS, 2000);
-      await scratch.devServer(scratch.root, "up");
+  test("keeps the log of a run that failed on its first line", async () => {
+    // The wrong implementation truncates the log at `up`, before the child is
+    // known to have started — so the run a person came to read about is
+    // destroyed by the next attempt to reproduce it.
+    await using scratch = await scratchRepo(NEVER_BINDS, 2000);
+    await scratch.devServer(scratch.root, "up");
 
-      await scratch.devServer(scratch.root, "up");
-      const kept = await scratch.devServer(scratch.root, "logs");
+    await scratch.devServer(scratch.root, "up");
+    const kept = await scratch.devServer(scratch.root, "logs");
 
-      expect(kept.stdout.match(/started, binding nothing/g)).toHaveLength(2);
-      expect(kept.stdout.match(/=== dev-server up /g)).toHaveLength(2);
-    },
-    CASE_MS,
-  );
+    expect(kept.stdout.match(/started, binding nothing/g)).toHaveLength(2);
+    expect(kept.stdout.match(/=== dev-server up /g)).toHaveLength(2);
+  });
 
-  test(
-    "down stops the process, and says which of the two things it did",
-    async () => {
-      // The wrong implementation deletes the record and reports success while the
-      // server goes on serving: the caller is told a thing happened that did not,
-      // and the port stays held by a process nothing can find any more.
-      await using scratch = await scratchRepo(SERVES);
-      await scratch.devServer(scratch.root, "up");
-      const server = await scratch.record("main");
+  test("down stops the process, and says which of the two things it did", async () => {
+    // The wrong implementation deletes the record and reports success while the
+    // server goes on serving: the caller is told a thing happened that did not,
+    // and the port stays held by a process nothing can find any more.
+    await using scratch = await scratchRepo(SERVES);
+    await scratch.devServer(scratch.root, "up");
+    const server = await scratch.record("main");
 
-      const stopped = await scratch.devServer(scratch.root, "down");
-      const again = await scratch.devServer(scratch.root, "down");
+    const stopped = await scratch.devServer(scratch.root, "down");
+    const again = await scratch.devServer(scratch.root, "down");
 
-      expect(stopped.code).toBe(0);
-      expect(stopped.stderr).toContain("stopped");
-      expect(again.code).toBe(0);
-      expect(await settles(() => !running(server.pid))).toBe(true);
-      expect(await answers(server.port)).toBe(false);
-      expect(await scratch.recordOrNull("main")).toBeNull();
-    },
-    CASE_MS,
-  );
+    expect(stopped.code).toBe(0);
+    expect(stopped.stderr).toContain("stopped");
+    expect(again.code).toBe(0);
+    expect(await settles(async () => !(await running(server.pid)))).toBe(true);
+    expect(await answers(server.port)).toBe(false);
+    expect(await scratch.recordOrNull("main")).toBeNull();
+  });
 
-  test(
-    "sweep collects the worktrees that are gone and leaves the rest alone",
-    async () => {
-      // Two wrong implementations. One drops the record without signalling, and
-      // the server of a worktree nobody can stand in any more runs until the box
-      // reboots. The other reads "is this worktree the one I am in?" and takes
-      // down every server but its own.
-      await using scratch = await scratchRepo(SERVES);
-      const feature = await scratch.worktree("feature");
-      await scratch.devServer(scratch.root, "up");
-      await scratch.devServer(feature, "up");
-      const kept = await scratch.record("main");
-      const doomed = await scratch.record("feature");
-      const doomedLog = scratch.paths("feature").log;
+  test("down kills a server that outlives SIGTERM, and forgets it only once it is gone", async () => {
+    // The wrong implementation stops at SIGTERM and forgets the record while
+    // the server goes on serving on the port.
+    await using scratch = await scratchRepo(IGNORES_SIGTERM);
+    expect((await scratch.devServer(scratch.root, "up")).code).toBe(0);
+    const server = await scratch.record("main");
 
-      const removed = Bun.spawnSync(["git", "worktree", "remove", "--force", feature], {
-        cwd: scratch.root,
-      });
-      expect(removed.exitCode).toBe(0);
-      const swept = await scratch.devServer(scratch.root, "sweep");
+    const stopped = await scratch.devServer(scratch.root, "down");
 
-      expect(swept.code).toBe(0);
-      expect(swept.stderr).toContain(feature);
-      expect(await settles(() => !running(doomed.pid))).toBe(true);
-      expect(await scratch.recordOrNull("feature")).toBeNull();
-      expect(await Bun.file(doomedLog).exists()).toBe(false);
-      expect(running(kept.pid)).toBe(true);
-      expect(await answers(kept.port)).toBe(true);
-      expect(await scratch.recordOrNull("main")).not.toBeNull();
-    },
-    CASE_MS,
-  );
+    expect(stopped.code).toBe(0);
+    expect(stopped.stderr).toContain("stopped");
+    expect(await runningIn(server.pid)).toEqual([]);
+    expect(await answers(server.port)).toBe(false);
+    expect(await scratch.recordOrNull("main")).toBeNull();
+  });
+
+  test("sweep collects the worktrees that are gone and leaves the rest alone", async () => {
+    // Two wrong implementations. One drops the record without signalling, and
+    // the server of a worktree nobody can stand in any more runs until the box
+    // reboots. The other reads "is this worktree the one I am in?" and takes
+    // down every server but its own.
+    await using scratch = await scratchRepo(SERVES);
+    const feature = await scratch.worktree("feature");
+    await scratch.devServer(scratch.root, "up");
+    await scratch.devServer(feature, "up");
+    const kept = await scratch.record("main");
+    const doomed = await scratch.record("feature");
+    const doomedLog = scratch.paths("feature").log;
+
+    const removed = Bun.spawnSync(["git", "worktree", "remove", "--force", feature], {
+      cwd: scratch.root,
+    });
+    expect(removed.exitCode).toBe(0);
+    const swept = await scratch.devServer(scratch.root, "sweep");
+
+    expect(swept.code).toBe(0);
+    expect(swept.stderr).toContain(feature);
+    expect(await settles(async () => !(await running(doomed.pid)))).toBe(true);
+    expect(await scratch.recordOrNull("feature")).toBeNull();
+    expect(await Bun.file(doomedLog).exists()).toBe(false);
+    expect(await running(kept.pid)).toBe(true);
+    expect(await answers(kept.port)).toBe(true);
+    expect(await scratch.recordOrNull("main")).not.toBeNull();
+  });
+});
+
+describe("a server that has died and is not yet reaped", () => {
+  // Whatever adopted a dead server reaps it on its own time, and on a busy box
+  // that is late: until then `/proc` still lists it, as a zombie. The wrong
+  // implementation reads any listed process with the recorded start tick as the
+  // server alive. Each case starts the server under a parent that never reaps,
+  // kills it there, and runs one command against it.
+
+  /** A server started under a parent that never reaps it, and killed whole: a dead leader and nothing else. */
+  async function deadServer(
+    scratch: Awaited<ReturnType<typeof scratchRepo>>,
+  ): Promise<{ readonly server: Server } & AsyncDisposable> {
+    const started = await scratch.devServerUnreaped(scratch.root, "up");
+    expect(started.code).toBe(0);
+    const server = await scratch.record("main");
+    killBehindItsBack(server.pid);
+    expect(await settles(() => unreaped(server.pid))).toBe(true);
+    return { server, [Symbol.asyncDispose]: started[Symbol.asyncDispose] };
+  }
+
+  test("down forgets it and succeeds, as it does a server that was reaped", async () => {
+    await using scratch = await scratchRepo(SERVES);
+    await using dead = await deadServer(scratch);
+
+    const stopped = await scratch.devServer(scratch.root, "down");
+
+    expect(stopped.code).toBe(0);
+    expect(stopped.stderr).toContain("already gone");
+    expect(await scratch.recordOrNull("main")).toBeNull();
+    expect(await unreaped(dead.server.pid)).toBe(true);
+  });
+
+  test("down forgets it and succeeds where /proc hides other users' processes", async () => {
+    // `down` reads every process to find what is left of the dead server's
+    // group, and where `/proc` is mounted `hidepid=1` another user's entry is
+    // listed and its read refused. The wrong implementation fails on that
+    // refusal and keeps the record of a server that is gone. The whole case
+    // runs in the namespace, since a server started outside it is not listed
+    // by the `/proc` it mounts.
+    const probe = `const fixture = await import(${JSON.stringify(join(import.meta.dir, "dev-server-fixture.ts"))});
+await using scratch = await fixture.scratchRepo(fixture.SERVES);
+await using started = await scratch.devServerUnreaped(scratch.root, "up");
+if (started.code !== 0) throw new Error("up exited " + started.code + ": " + started.stderr);
+const server = await scratch.record("main");
+fixture.killBehindItsBack(server.pid);
+const dead = await fixture.settles(() => fixture.unreaped(server.pid));
+const stopped = await scratch.devServer(scratch.root, "down");
+const forgotten = (await scratch.recordOrNull("main")) === null;
+console.log(JSON.stringify({ up: started.code, dead, down: stopped.code, forgotten }));
+console.log(stopped.stderr);`;
+
+    const ended = await besideAHiddenProcess(probe);
+
+    expect({ code: ended.code, stderr: ended.stderr }).toEqual({ code: 0, stderr: "" });
+    const [first = "", ...said] = ended.stdout.split("\n");
+    const outcome: unknown = JSON.parse(first);
+    expect(outcome).toEqual({ up: 0, dead: true, down: 0, forgotten: true });
+    expect(said.join("\n")).toContain("already gone");
+  });
+
+  test("status shows it dead", async () => {
+    await using scratch = await scratchRepo(SERVES);
+    await using dead = await deadServer(scratch);
+
+    const listed = await scratch.devServer(scratch.root, "status");
+
+    expect(listed.stdout).toContain(String(dead.server.pid));
+    expect(listed.stdout).toContain("dead");
+    expect(listed.stdout).not.toContain("alive");
+  });
+
+  test("up starts a fresh one on the same port rather than waiting for it", async () => {
+    // The wrong implementation waits out the readiness timeout for a server that
+    // will never answer, then fails to stop it.
+    await using scratch = await scratchRepo(SERVES);
+    await using dead = await deadServer(scratch);
+
+    const restarted = await scratch.devServer(scratch.root, "up");
+
+    expect(restarted.code).toBe(0);
+    const fresh = await scratch.record("main");
+    expect(fresh.pid).not.toBe(dead.server.pid);
+    expect(fresh.port).toBe(dead.server.port);
+    expect(await answers(fresh.port)).toBe(true);
+  });
+
+  test("up ends what is left in its group serving the port, and starts afresh there", async () => {
+    // Here `bun dev.ts` still serves after `bun run dev` above it was killed.
+    // The wrong implementation reads the dead leader as no server at all, finds
+    // the claimed port held and refuses it as somebody else's.
+    await using scratch = await scratchRepo(SERVES);
+    await using started = await scratch.devServerUnreaped(scratch.root, "up");
+    expect(started.code).toBe(0);
+    const old = await scratch.record("main");
+    killLeaderAlone(old.pid);
+    expect(await settles(() => unreaped(old.pid))).toBe(true);
+    expect(await answers(old.port)).toBe(true);
+
+    const restarted = await scratch.devServer(scratch.root, "up");
+
+    expect(restarted.code).toBe(0);
+    const fresh = await scratch.record("main");
+    expect(fresh.pid).not.toBe(old.pid);
+    expect(fresh.port).toBe(old.port);
+    expect(await runningIn(old.pid)).toEqual([]);
+    expect(await answers(fresh.port)).toBe(true);
+  });
+
+  test("up ends what is left in its group binding nothing before it writes a new record", async () => {
+    // The member here holds no port, as a watcher would. The wrong
+    // implementation writes the new record over the old one, and the member
+    // runs on with nothing naming it.
+    await using scratch = await scratchRepo(LETS_GO_OF_ITS_PORT);
+    await using started = await scratch.devServerUnreaped(scratch.root, "up");
+    expect(started.code).toBe(0);
+    const old = await scratch.record("main");
+    await fetch(`http://127.0.0.1:${old.port}/unbind`);
+    expect(await settles(async () => !(await answers(old.port)))).toBe(true);
+    killLeaderAlone(old.pid);
+    expect(await settles(() => unreaped(old.pid))).toBe(true);
+    expect(await runningIn(old.pid)).not.toEqual([]);
+
+    const restarted = await scratch.devServer(scratch.root, "up");
+
+    expect(restarted.code).toBe(0);
+    expect((await scratch.record("main")).pid).not.toBe(old.pid);
+    expect(await runningIn(old.pid)).toEqual([]);
+  });
+
+  test("down kills what is left in its group before it forgets it", async () => {
+    // While the dead leader is unreaped it pins its process group, so what
+    // runs in it is provably the server's: here `bun dev.ts`, still serving
+    // after `bun run dev` above it was killed. The wrong implementation
+    // forgets the record without a signal, and the port stays held by a
+    // process nothing names any more.
+    await using scratch = await scratchRepo(SERVES);
+    await using started = await scratch.devServerUnreaped(scratch.root, "up");
+    expect(started.code).toBe(0);
+    const server = await scratch.record("main");
+    killLeaderAlone(server.pid);
+    expect(await settles(() => unreaped(server.pid))).toBe(true);
+    expect(await runningIn(server.pid)).not.toEqual([]);
+    expect(await answers(server.port)).toBe(true);
+
+    const stopped = await scratch.devServer(scratch.root, "down");
+
+    expect(stopped.code).toBe(0);
+    expect(await runningIn(server.pid)).toEqual([]);
+    expect(await answers(server.port)).toBe(false);
+    expect(await scratch.recordOrNull("main")).toBeNull();
+  });
 });
 
 describe("the argument list", () => {
-  test(
-    "refuses what a command does not take, rather than ignoring it",
-    async () => {
-      // The wrong implementation reads the flags it knows and drops the rest — so
-      // `logs --folow` prints one tail and exits, and the person watching an empty
-      // terminal concludes the follow is broken rather than misspelt.
-      await using scratch = await scratchRepo(SERVES);
+  test("refuses what a command does not take, rather than ignoring it", async () => {
+    // The wrong implementation reads the flags it knows and drops the rest — so
+    // `logs --folow` prints one tail and exits, and the person watching an empty
+    // terminal concludes the follow is broken rather than misspelt.
+    await using scratch = await scratchRepo(SERVES);
 
-      const misspelt = await scratch.devServer(scratch.root, "logs", "--folow");
-      const surplus = await scratch.devServer(scratch.root, "status", "--all");
-      const unknown = await scratch.devServer(scratch.root, "restart");
+    const misspelt = await scratch.devServer(scratch.root, "logs", "--folow");
+    const surplus = await scratch.devServer(scratch.root, "status", "--all");
+    const unknown = await scratch.devServer(scratch.root, "restart");
 
-      expect(misspelt.code).toBe(1);
-      expect(misspelt.stderr).toContain("--folow");
-      expect(surplus.code).toBe(1);
-      expect(surplus.stderr).toContain("--all");
-      expect(unknown.code).toBe(1);
-      expect(unknown.stderr).toContain("no such command");
-    },
-    CASE_MS,
-  );
+    expect(misspelt.code).toBe(1);
+    expect(misspelt.stderr).toContain("--folow");
+    expect(surplus.code).toBe(1);
+    expect(surplus.stderr).toContain("--all");
+    expect(unknown.code).toBe(1);
+    expect(unknown.stderr).toContain("no such command");
+  });
 
-  test(
-    "settles the arguments before it reads anything off the machine",
-    async () => {
-      // The wrong implementation asks git, reads a manifest and makes a directory
-      // before it has looked at the command word — so outside a repository the
-      // usage never prints, and a typo leaves a state directory behind.
-      const outside = await mkdtemp(join(tmpdir(), "dev-server-nowhere-"));
-      try {
-        const proc = Bun.spawn(
-          [process.execPath, "run", join(import.meta.dir, "..", "dev-server.ts"), "restart"],
-          {
-            cwd: outside,
-            stdin: "ignore",
-            stdout: "pipe",
-            stderr: "pipe",
-          },
-        );
-        const stderr = await new Response(proc.stderr).text();
+  test("settles the arguments before it reads anything off the machine", async () => {
+    // The wrong implementation asks git, reads a manifest and makes a directory
+    // before it has looked at the command word — so outside a repository the
+    // usage never prints, and a typo leaves a state directory behind.
+    const outside = await mkdtemp(join(tmpdir(), "dev-server-nowhere-"));
+    try {
+      const proc = Bun.spawn(
+        [process.execPath, "run", join(import.meta.dir, "..", "dev-server.ts"), "restart"],
+        {
+          cwd: outside,
+          stdin: "ignore",
+          stdout: "pipe",
+          stderr: "pipe",
+        },
+      );
+      const stderr = await new Response(proc.stderr).text();
 
-        expect(await proc.exited).toBe(1);
-        expect(stderr).toContain("no such command");
-        expect(stderr).not.toContain("git ");
-      } finally {
-        await rm(outside, { recursive: true, force: true });
-      }
-    },
-    CASE_MS,
-  );
+      expect(await proc.exited).toBe(1);
+      expect(stderr).toContain("no such command");
+      expect(stderr).not.toContain("git ");
+    } finally {
+      await rm(outside, { recursive: true, force: true });
+    }
+  });
 });
 
 describe("the fixture's own guards", () => {
-  test("refuses to signal a pid that is not one", () => {
+  test("gives a fixture's name back only once its directory is gone", async () => {
+    // The wrong implementation releases the claim and then removes the
+    // directory. A second run one case behind takes the name in that gap, so
+    // the same directory, and the first run's removal deletes the fixture the
+    // second is building.
+    const scratch = await scratchRepo(SERVES);
+    const home = dirname(scratch.root);
+
+    const disposed = scratch[Symbol.asyncDispose]();
+    using reclaimed = await reclaim(scratch.name);
+    const homeWhenFree = existsSync(home);
+    await disposed;
+
+    expect(reclaimed.name).toBe(scratch.name);
+    expect(homeWhenFree).toBe(false);
+  });
+
+  test("hands two runs at once different blocks, none the kernel gives a connection", () => {
+    // Two wrong implementations. One names fixtures alike in every run, or
+    // forgets the claim it took, and two runs on one machine bind each other's
+    // ports. The other lets a block into the ephemeral range, where an outgoing
+    // connection on another address holds the port that the HOST case binds on
+    // 0.0.0.0 after `up` has probed it free on 127.0.0.1.
+    using first = claimBlocks("guard");
+    using second = claimBlocks("guard");
+
+    expect(second.name).not.toBe(first.name);
+    const all = [...first.bases, ...second.bases];
+    expect(new Set(all).size).toBe(BRANCHES.length * 2);
+    for (const base of all) expect(base + PORTS_PER_WORKTREE).toBeLessThanOrEqual(EPHEMERAL_FLOOR);
+  });
+
+  test("refuses to signal a pid that is not one", async () => {
     // `killBehindItsBack(record?.pid ?? 0)` sent SIGKILL to the caller's own
     // process group: against an implementation that writes no record, this suite
     // killed `bun test` and reported nothing. A case reads a pid off a record
     // that has to be there, and these refuse the two numbers that are not pids.
     expect(() => killBehindItsBack(0)).toThrow("not a pid");
     expect(() => killBehindItsBack(1)).toThrow("not a pid");
-    expect(() => running(0)).toThrow("not a pid");
+    await expect(running(0)).rejects.toThrow("not a pid");
   });
 });
 
 describe("the package", () => {
-  test("ships the CLI, its derivation and its lock, and names only the CLI as a binary", async () => {
+  test("ships the CLI, its derivation and its lock, and names the CLI as a binary and neither module beside it", async () => {
     // Two wrong implementations. A file omitted from `files` is not published and
     // one omitted from `bin` has no name for `bun run` to find. And a bin listed
     // in `exports` is a module this package tells consumers to import, which is
@@ -912,7 +977,10 @@ describe("the package", () => {
     expect(parsed.files).toContain("dev-server.ts");
     expect(parsed.files).toContain("dev-server-derive.ts");
     expect(parsed.files).toContain("file-lock.ts");
-    expect(parsed.bin).toEqual({ "dev-server": "./dev-server.ts" });
+    // Other bins of this package are their own suites' to name.
+    expect(parsed.bin).toHaveProperty(["dev-server"], "./dev-server.ts");
+    expect(JSON.stringify(parsed.bin)).not.toContain("dev-server-derive.ts");
+    expect(JSON.stringify(parsed.bin)).not.toContain("file-lock.ts");
     expect(parsed.exports).not.toHaveProperty(["./dev-server.ts"]);
     expect(parsed.exports).not.toHaveProperty(["./dev-server-derive.ts"]);
     expect(parsed.exports).not.toHaveProperty(["./file-lock.ts"]);

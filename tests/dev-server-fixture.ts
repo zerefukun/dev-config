@@ -8,29 +8,119 @@
  * which is the one wait long enough to matter, and the cases about a server that
  * never answers set it to two seconds.
  *
- * The fixture root is derived rather than made fresh, for `tests/tree.ts`'s
- * reason one step further on: what a killed run leaks here is a detached server
- * process holding a port, and the port comes from the package name — so two
- * checkouts under review get different names, while two runs of one checkout get
- * the same ones and reclaim them. Different names can still hash to one port
- * block, which is why the suite holds one lock per machine for its whole run.
+ * A fixture's ports come from its package name, so the name is what keeps two
+ * runs of this suite on one machine apart: `claimBlocks` below.
  */
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { chmod, mkdir, readdir, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 
-import { isServer, recordStem, type Server } from "../dev-server-derive.ts";
+import {
+  basePort,
+  isServer,
+  PORT_FLOOR,
+  PORTS_PER_WORKTREE,
+  recordStem,
+  type Server,
+} from "../dev-server-derive.ts";
+import { bootId, procStat } from "../file-lock.ts";
+import { heard } from "./proc-reading.ts";
 
 /** The CLI under test, reached the way a consuming repo reaches it. */
 const CLI = join(dirname(import.meta.dir), "dev-server.ts");
 
-const CHECKOUT = dirname(import.meta.dir);
-const DIGEST = new Bun.CryptoHasher("sha256").update(CHECKOUT).digest("hex").slice(0, 12);
-const FIXTURES = join(tmpdir(), `dev-server-fixtures-${DIGEST}`);
+/** The parent that adopts what a command leaves behind and reaps none of it. */
+const UNREAPING = join(import.meta.dir, "unreaping-parent.ts");
 
-/** The fixture's position in the run, which is the half of its name that varies. */
-let made = 0;
+/** Every branch a fixture runs `up` on. A fixture claims all of their blocks before any case starts a server. */
+export const BRANCHES = ["main", "feature", "feat/x", "feat-x"] as const;
+
+export type Branch = (typeof BRANCHES)[number];
+
+/** The first port the kernel hands an outgoing connection on this machine. */
+export const EPHEMERAL_FLOOR = Number(
+  readFileSync("/proc/sys/net/ipv4/ip_local_port_range", "utf8").trim().split(/\s+/)[0],
+);
+
+/** How many names `claimBlocks` tries before it says the machine has no room. */
+const CANDIDATES = 100_000;
+
+export interface Claim extends Disposable {
+  /** The package name every block was derived from. */
+  readonly name: string;
+  /** The base port of each branch's block, in `BRANCHES` order. */
+  readonly bases: readonly number[];
+}
+
+/**
+ * A package name whose port blocks, one per branch in `BRANCHES`, belong to the
+ * caller until it disposes of the claim or dies.
+ *
+ * The claim is a loopback listener on each block's last port, which `up` reaches
+ * only when the nine before it are held. The kernel grants a port to one socket
+ * on the whole machine and frees it when its process dies, so a second run of
+ * this suite, whatever its checkout or temp directory, fails the bind and takes
+ * the next name, while one run keeps its names for as long as it holds them. A
+ * name that puts two branches in one block fails the same way, on its own second
+ * bind of that block's last port, so every block of a claim is its own.
+ *
+ * Every block also lies below the ephemeral range. The kernel gives an outgoing
+ * connection a port from that range on whichever local address it leaves from,
+ * and the connection keeps the port for a minute of TIME_WAIT after it closes.
+ * `up` probes a port on 127.0.0.1 alone, so a port held that way on any other
+ * address passes the probe and then fails a dev script that binds 0.0.0.0.
+ */
+export function claimBlocks(stem: string): Claim {
+  for (let candidate = 0; candidate < CANDIDATES; candidate++) {
+    const name = `${stem}-${candidate}`;
+    const bases = BRANCHES.map((branch) =>
+      basePort(name, { worktree: "", branch, detached: false }),
+    );
+    if (bases.some((base) => base + PORTS_PER_WORKTREE > EPHEMERAL_FLOOR)) continue;
+    const held = hold(bases.map((base) => base + PORTS_PER_WORKTREE - 1));
+    if (held === null) continue;
+    return { name, bases, [Symbol.dispose]: () => held.dispose() };
+  }
+  throw new Error(
+    `no name among ${CANDIDATES} for ${stem} puts every block of ${BRANCHES.join(", ")} free and between ${PORT_FLOOR} and the ephemeral range at ${EPHEMERAL_FLOOR}`,
+  );
+}
+
+/**
+ * The claim on `name`, taken the first turn of the event loop it comes free, as
+ * a second run of this suite would take it. Every name the search finds before
+ * it is held meanwhile, so the search cannot settle on one of those instead.
+ */
+export async function reclaim(name: string): Promise<Claim> {
+  const stem = name.slice(0, name.lastIndexOf("-"));
+  const rank = (candidate: string): number => Number(candidate.slice(stem.length + 1));
+  using passed = new DisposableStack();
+  for (let turn = 0; turn < CANDIDATES; turn++) {
+    const claim = claimBlocks(stem);
+    if (claim.name === name) return claim;
+    if (rank(claim.name) < rank(name)) passed.use(claim);
+    else claim[Symbol.dispose]();
+    await new Promise((next) => setImmediate(next));
+  }
+  throw new Error(`${name} did not come free within ${CANDIDATES} turns of the event loop`);
+}
+
+/** Every port bound on loopback, or none of them. */
+function hold(ports: readonly number[]): DisposableStack | null {
+  using held = new DisposableStack();
+  for (const port of ports) {
+    try {
+      const listener = Bun.listen({ hostname: "127.0.0.1", port, socket: { data() {} } });
+      held.defer(() => listener.stop(true));
+    } catch {
+      // Claimed by another run, or by anything else on this machine: either way
+      // not this name's to use.
+      return null;
+    }
+  }
+  return held.move();
+}
 
 /**
  * A `dev` script that binds what it was told to bind, and echoes every name the
@@ -58,6 +148,27 @@ export const EXITS_AT_ONCE = `console.error("boom: the dev script could not star
 process.exit(3);
 `;
 
+/**
+ * A `dev` script that serves and asks SIGTERM to be ignored. `bun run dev`
+ * above it passes SIGTERM on and waits for it, so the whole server outlives
+ * the signal.
+ */
+export const IGNORES_SIGTERM = `${SERVES}process.on("SIGTERM", () => console.log("fixture ignored SIGTERM"));
+`;
+
+/** A `dev` script that serves until `/unbind` is asked for, then runs on binding nothing, as a watcher does. */
+export const LETS_GO_OF_ITS_PORT = `const server = Bun.serve({
+  port: Number(process.env["PORT"]),
+  hostname: process.env["HOST"],
+  fetch: (request) => {
+    if (new URL(request.url).pathname !== "/unbind") return new Response("ok");
+    setTimeout(() => server.stop(true), 0);
+    return new Response("unbinding");
+  },
+});
+setInterval(() => {}, 60_000);
+`;
+
 /** A `dev` script that starts, says so, and never listens. */
 export const NEVER_BINDS = `console.log("started, binding nothing");
 await Bun.sleep(60000);
@@ -70,26 +181,34 @@ export interface Run {
 }
 
 export interface Scratch extends AsyncDisposable {
+  /** The package name its claim gave it. */
+  readonly name: string;
   /** The primary checkout. */
   readonly root: string;
   /** Where the records are, so a case can read one or check that it is gone. */
   readonly state: string;
   /** A linked worktree on a branch of its own, ready to run the CLI. */
-  worktree(branch: string): Promise<string>;
+  worktree(branch: Exclude<Branch, "main">): Promise<string>;
   /** `bun run dev-server <args>` in a worktree, exactly as a person would type it. */
   devServer(cwd: string, ...args: readonly string[]): Promise<Run>;
   /** Two of them at once, started as close together as this can arrange. */
   devServerRace(cwd: string, ...args: readonly string[]): Promise<[Run, Run]>;
+  /**
+   * The same, run under a parent that adopts the server it leaves running and
+   * reaps nothing it adopted until disposed of: a server that dies meanwhile
+   * stays a zombie, dead and still listed in `/proc`.
+   */
+  devServerUnreaped(cwd: string, ...args: readonly string[]): Promise<Run & AsyncDisposable>;
   /** Where a branch's record, log and lock live, derived the way the CLI derives them. */
-  paths(branch: string): { readonly record: string; readonly log: string; readonly lock: string };
+  paths(branch: Branch): { readonly record: string; readonly log: string; readonly lock: string };
   /** The record for a branch. Refuses to invent one: an absent record is a failing case, not a zero. */
-  record(branch: string): Promise<Server>;
+  record(branch: Branch): Promise<Server>;
   /** The record for a branch, or null — for the cases whose whole claim is that there is none. */
-  recordOrNull(branch: string): Promise<Server | null>;
+  recordOrNull(branch: Branch): Promise<Server | null>;
   /** Puts exactly these bytes where a branch's record goes, for the cases about a record nothing wrote. */
-  putRecord(branch: string, contents: string): Promise<void>;
+  putRecord(branch: Branch, contents: string): Promise<void>;
   /** The same, for the lock one `up` holds against another. */
-  putLock(branch: string, contents: string): Promise<void>;
+  putLock(branch: Branch, contents: string): Promise<void>;
 }
 
 /**
@@ -157,10 +276,12 @@ function slay(pid: number): void {
 }
 
 export async function scratchRepo(dev: string, ready = 20_000): Promise<Scratch> {
-  const home = join(FIXTURES, `${made}`);
-  const name = `dev-server-fixture-${DIGEST}-${made++}`;
+  const claim = claimBlocks("dev-server-fixture");
+  const { name } = claim;
+  const home = join(tmpdir(), name);
   // Whatever a killed run left at this exact path, rather than a sweep of the
-  // directory: a sweep is how two runs sharing a machine delete each other's work.
+  // directory: a sweep is how two runs sharing a machine delete each other's
+  // work. The claim makes the path this run's alone.
   await rm(home, { recursive: true, force: true });
   const root = join(home, "repo");
   await mkdir(root, { recursive: true });
@@ -177,9 +298,9 @@ export async function scratchRepo(dev: string, ready = 20_000): Promise<Scratch>
 
   const seen = new Set<number>();
   const state = join(root, ".git", "dev-server");
-  const worktrees = new Map<string, string>([["main", root]]);
+  const worktrees = new Map<Branch, string>([["main", root]]);
 
-  function paths(branch: string): { record: string; log: string; lock: string } {
+  function paths(branch: Branch): { record: string; log: string; lock: string } {
     const path = worktrees.get(branch);
     if (path === undefined) throw new Error(`this fixture has no worktree on ${branch}`);
     const stem = recordStem(path, branch);
@@ -211,10 +332,12 @@ export async function scratchRepo(dev: string, ready = 20_000): Promise<Scratch>
     }
   }
 
+  const environment = { ...process.env, DEV_SERVER_READY_TIMEOUT_MS: String(ready) };
+
   async function invoke(cwd: string, args: readonly string[]): Promise<Run> {
     const proc = Bun.spawn([process.execPath, "run", "dev-server", ...args], {
       cwd,
-      env: { ...process.env, DEV_SERVER_READY_TIMEOUT_MS: String(ready) },
+      env: environment,
       stdin: "ignore",
       stdout: "pipe",
       stderr: "pipe",
@@ -228,10 +351,11 @@ export async function scratchRepo(dev: string, ready = 20_000): Promise<Scratch>
   }
 
   return {
+    name,
     root,
     state,
     paths,
-    async worktree(branch: string): Promise<string> {
+    async worktree(branch: Exclude<Branch, "main">): Promise<string> {
       // Numbered, because the point of several of these cases is two branches
       // whose readable form is the same one.
       const path = join(home, `wt-${worktrees.size}-${branch.replaceAll(/[^A-Za-z0-9]+/g, "-")}`);
@@ -250,27 +374,55 @@ export async function scratchRepo(dev: string, ready = 20_000): Promise<Scratch>
       await remember();
       return both;
     },
-    async record(branch: string): Promise<Server> {
+    async devServerUnreaped(
+      cwd: string,
+      ...args: readonly string[]
+    ): Promise<Run & AsyncDisposable> {
+      const parent = Bun.spawn(
+        [process.execPath, UNREAPING, process.execPath, "run", "dev-server", ...args],
+        { cwd, env: environment, stdin: "pipe", stdout: "pipe", stderr: "inherit" },
+      );
+      const [said = ""] = await heard(parent.stdout, 1);
+      await remember();
+      const run: unknown = JSON.parse(said);
+      if (!isRun(run)) throw new Error(`the unreaping parent said ${said}`);
+      return {
+        ...run,
+        async [Symbol.asyncDispose](): Promise<void> {
+          await parent.stdin.end();
+          await parent.exited;
+        },
+      };
+    },
+    async record(branch: Branch): Promise<Server> {
       const { record } = paths(branch);
       if (!existsSync(record)) throw new Error(`no record at ${record}`);
       return read(JSON.parse(await readFile(record, "utf8")));
     },
-    async recordOrNull(branch: string): Promise<Server | null> {
+    async recordOrNull(branch: Branch): Promise<Server | null> {
       const { record } = paths(branch);
       return existsSync(record) ? read(JSON.parse(await readFile(record, "utf8"))) : null;
     },
-    async putRecord(branch: string, contents: string): Promise<void> {
+    async putRecord(branch: Branch, contents: string): Promise<void> {
       await mkdir(state, { recursive: true });
       await Bun.write(paths(branch).record, contents);
     },
-    async putLock(branch: string, contents: string): Promise<void> {
+    async putLock(branch: Branch, contents: string): Promise<void> {
       await mkdir(state, { recursive: true });
       await Bun.write(paths(branch).lock, contents);
     },
     async [Symbol.asyncDispose](): Promise<void> {
       await remember();
       for (const pid of seen) slay(pid);
+      // The name goes back last. The next run to claim it reuses its ports and
+      // its directory, so nothing of this fixture may still hold either.
+      for (const pid of seen) {
+        if (!(await settles(() => !exists(-real(pid))))) {
+          throw new Error(`process group ${pid} outlived SIGKILL, so its blocks stay claimed`);
+        }
+      }
       await rm(home, { recursive: true, force: true });
+      claim[Symbol.dispose]();
     },
   };
 }
@@ -296,7 +448,7 @@ export async function bystander(): Promise<{ readonly pid: number } & Disposable
   // `setsid` execs in place, but not before it has run: a case that signalled
   // `-pid` in that gap reached nothing, the process lived on, and the case
   // failed on whichever assertion came next.
-  const led = await settles(async () => await leadsItsGroup(proc.pid));
+  const led = await settles(async () => (await procStat(proc.pid))?.group === proc.pid);
   if (!led) throw new Error(`${proc.pid} never became the leader of its own process group`);
   return {
     pid: proc.pid,
@@ -306,28 +458,17 @@ export async function bystander(): Promise<{ readonly pid: number } & Disposable
   };
 }
 
-async function leadsItsGroup(pid: number): Promise<boolean> {
-  try {
-    const raw = await readFile(`/proc/${pid}/stat`, "utf8");
-    return Number(raw.slice(raw.lastIndexOf(")") + 2).split(" ")[2]) === pid;
-  } catch {
-    // Gone already, which is not a group leader either.
-    return false;
-  }
-}
-
 /**
  * What a file has to say about a process for this tool to act on it: which boot,
- * and which tick within it. Read the same way the CLI reads it, because a case
+ * and which tick within it. Read through the CLI's own reader, because a case
  * that planted a different spelling would be grading its own arithmetic.
  */
 export async function holderOf(
   pid: number,
 ): Promise<{ pid: number; bootId: string; startTicks: number }> {
-  const raw = await readFile(`/proc/${real(pid)}/stat`, "utf8");
-  const startTicks = Number(raw.slice(raw.lastIndexOf(")") + 2).split(" ")[19]);
-  const bootId = (await readFile("/proc/sys/kernel/random/boot_id", "utf8")).trim();
-  return { pid, bootId, startTicks };
+  const stat = await procStat(real(pid));
+  if (stat === null) throw new Error(`process ${pid} is not there to hold anything`);
+  return { pid, bootId: await bootId(), startTicks: stat.startTicks };
 }
 
 /** Waits for something to exist, and hands it over — for the cases that need it while the command still runs. */
@@ -352,20 +493,52 @@ export async function stays(
   return await unchanged();
 }
 
-/** Whether a process is there at all — the question `status` answers in its own column. */
-export function running(pid: number): boolean {
-  const target = real(pid);
+function isRun(value: unknown): value is Run {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    "code" in value &&
+    typeof value.code === "number" &&
+    "stdout" in value &&
+    typeof value.stdout === "string" &&
+    "stderr" in value &&
+    typeof value.stderr === "string"
+  );
+}
+
+/**
+ * Whether a process is there and still runs — the question `status` answers in
+ * its own column. A process that has exited is not running, whether or not
+ * whatever adopted it has reaped it yet.
+ */
+export async function running(pid: number): Promise<boolean> {
+  return (await procStat(real(pid)))?.alive === true;
+}
+
+/** Whether a process has exited and is still listed, because nobody has reaped it. */
+export async function unreaped(pid: number): Promise<boolean> {
+  return (await procStat(real(pid)))?.alive === false;
+}
+
+/** Whether a signal reaches anything at a pid, or at a whole process group as `-pid`. */
+function exists(target: number): boolean {
   try {
     process.kill(target, 0);
     return true;
-  } catch {
-    return false;
+  } catch (error) {
+    if (error instanceof Error && "code" in error && error.code === "ESRCH") return false;
+    throw error;
   }
 }
 
 /** Kills a server without telling the CLI, which is what a `pkill` or a reboot does to one. */
 export function killBehindItsBack(pid: number): void {
   slay(pid);
+}
+
+/** Kills a group's leader and nothing else in its group, as an OOM kill or a crash of `bun run` does. */
+export function killLeaderAlone(pid: number): void {
+  process.kill(real(pid), "SIGKILL");
 }
 
 /** Waits for a condition the operating system reaches on its own time — a process dying, a port closing. */
