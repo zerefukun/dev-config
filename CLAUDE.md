@@ -510,7 +510,6 @@ base enables exactly the rules the plugin defines.
 `bunfig.toml` names which suite, per file, and says why `dev-server-derive.ts`
 is not with them.
 
-=======
 The `test` script is `bun test --timeout 120000`, and that bound is every case's
 and every hook's here unless one names its own. A case's time on this box is
 its CPU time over the share of a core it is given, and the live sites' weight

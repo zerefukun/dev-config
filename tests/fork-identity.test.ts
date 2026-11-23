@@ -1,7 +1,8 @@
 /**
  * What an upstream sync has to leave true of this fork, which upstream's own
- * suites cannot say: the package is zerefukun/dev-config, and check.yml's
- * action pins name one commit that holds every action they call.
+ * suites cannot say: the package is zerefukun/dev-config, no conflict marker
+ * survives the merge, and check.yml's action pins name one commit that holds
+ * every action they call.
  */
 import { describe, expect, test } from "bun:test";
 import { join } from "node:path";
@@ -118,6 +119,22 @@ describe("this fork after an upstream sync", () => {
         if (UPSTREAM_OWNER.test(text) && !allowed.has(`${file}\n${text.trim()}`)) {
           found.push(`${file}:${index + 1}: ${text.trim()}`);
         }
+      });
+    }
+    expect(found).toEqual([]);
+  });
+
+  // Kills a sync that resolves a conflict and leaves one of git's marker lines
+  // behind, the bare separator included, which a check for the two ends alone
+  // passes. No heading in the tree is underlined with exactly seven equals
+  // signs, so the separator is a marker wherever it stands alone on a line.
+  test("leaves no conflict marker line in any tracked file", async () => {
+    const marker = /^(?:<{7}|>{7}|\|{7})(?: .*)?$|^={7}$/;
+    const found: string[] = [];
+    for (const file of await trackedFiles(ROOT, [])) {
+      const lines = (await Bun.file(join(ROOT, file)).text()).split("\n");
+      lines.forEach((text, index) => {
+        if (marker.test(text)) found.push(`${file}:${index + 1}: ${text}`);
       });
     }
     expect(found).toEqual([]);
