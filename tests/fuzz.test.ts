@@ -1,9 +1,11 @@
-import { describe, expect, setDefaultTimeout, test } from "bun:test";
+import { describe, expect, test } from "bun:test";
+import { join } from "node:path";
 import { constantFrom, integer, nat, property, tuple } from "fast-check";
 
-import type { Route, RouteLog } from "../route-log.ts";
+import type { Route } from "../route-log.ts";
 import { allowlistFrom } from "../.github/actions/_lib/gate.ts";
 import {
+  allowlisted,
   type Attempt,
   attemptFor,
   budgetFor,
@@ -13,12 +15,15 @@ import {
   type Fuzzed,
   fuzzVerdict,
   INVARIANTS,
+  type Plan,
   requestFor,
   seedFrom,
 } from "../.github/actions/db-gate/fuzz.ts";
-import { routeCoverage } from "../.github/actions/db-gate/route-coverage.ts";
 import { check } from "../property.ts";
 import { containing } from "./matchers.ts";
+import { scratch } from "./tree.ts";
+
+const FUZZ_MAIN = new URL("../.github/actions/db-gate/fuzz.main.ts", import.meta.url).pathname;
 
 /**
  * The fuzzer, against an app that answers the way apps answer: one route that
@@ -33,13 +38,6 @@ import { containing } from "./matchers.ts";
  * and a socket that never answered — and a fake would be this suite asserting
  * against its own idea of each of them.
  */
-
-// A case that drives the fuzzer spends its budget and then some — the request
-// that was in flight when the budget ran out still has its bound to use. Under
-// a five-second default that is a fourfold margin, which is not one on a box
-// that also serves four stacks and every other repo's CI. The same 30s the two
-// suites that spawn a process tree take, for the same reason.
-setDefaultTimeout(30_000);
 
 const OK: Route = { method: "GET", path: "/ok/:id" };
 const CAREFUL: Route = { method: "POST", path: "/careful/:id" };
@@ -160,26 +158,49 @@ function serving(): App {
   };
 }
 
-/** Long enough for several rounds over the table, short enough that the suite is not a wait. */
-const BUDGET_MS = 900;
+/** Which clock ends a run, which every case names. */
+type Ending = Pick<Plan, "budgetMs" | "boundMs">;
 
-/** Long enough that only a route which never answers reaches it. */
-const BOUND_MS = 250;
+/**
+ * A run that ends on the fuzzer's own count: at its thousandth failure, or at
+ * once with nothing to send. A table with a route that always fails stops
+ * after 1,055 to 2,000 requests here, 0.2s on a quiet core and 11 to 15s at a
+ * 3% CPU quota, where one request to `/careful` also took past 250ms to be
+ * answered (measured 2026-11-19, bun 1.4.4), so a correct run reaches this
+ * budget only below about a 0.5% share of a core. The budget and the bound
+ * together stay inside the suite's 120s, so a fuzzer that never stops fails its
+ * case's assertion rather than the runner's clock. The bound is also that of a
+ * request sent outside a run.
+ */
+const UNTIL_STOPPED: Ending = { budgetMs: 80_000, boundMs: 20_000 };
+
+/**
+ * A run nothing else ends, which is a case about the budget itself or a table
+ * no route of which fails: long enough for a round over the table, short
+ * enough that the suite is not a wait.
+ */
+const FOR_THE_BUDGET: Ending = { budgetMs: 900, boundMs: UNTIL_STOPPED.boundMs };
+
+/** A run with a route that never answers, which reaches its bound with the budget left for a round over the rest. */
+const UNTIL_THE_HANG: Ending = { budgetMs: FOR_THE_BUDGET.budgetMs, boundMs: 250 };
 
 async function fuzzing(
   app: App,
   routes: readonly Route[],
+  ending: Ending,
   seed = 1,
   waived: ReadonlySet<string> = new Set(),
 ): Promise<Fuzzed> {
-  return await fuzz({
-    origin: app.origin,
-    routes,
-    waived,
-    seed,
-    budgetMs: BUDGET_MS,
-    boundMs: BOUND_MS,
-  });
+  return await fuzz({ origin: app.origin, routes, waived, seed, ...ending });
+}
+
+/** The routes `allowlist` waives over `routes`, for a case whose allowlist is one that holds. */
+function waivers(routes: readonly Route[], allowlist: string): ReadonlySet<string> {
+  const hatch = allowlisted(routes, allowlistFrom(allowlist, "route-allowlist"));
+  if ("refused" in hatch) {
+    throw new Error(`the case's allowlist was refused: ${JSON.stringify(hatch.refused)}`);
+  }
+  return hatch.waived;
 }
 
 /** What a run said about one route, which is what each case below is about. */
@@ -371,7 +392,7 @@ describe("the command a failure hands back", () => {
 
     for (const [named, attempt] of drawn) {
       const at = app.received().length;
-      await fetch(attempt.url, requestFor(attempt, BOUND_MS));
+      await fetch(attempt.url, requestFor(attempt, UNTIL_STOPPED.boundMs));
       const { status, said } = await shell(curlFor(attempt));
       expect(`${named}: ${status} ${said}`).toBe(`${named}: 0 `);
       const [sent, replayed] = app.received().slice(at);
@@ -383,7 +404,9 @@ describe("the command a failure hands back", () => {
 describe("what the fuzzer refuses", () => {
   test("a handler that falls over on a parameter it did not bound", async () => {
     using app = serving();
-    expect(against(await fuzzing(app, ROUTES), STRICT)).toContainEqual(containing("answered 500"));
+    expect(against(await fuzzing(app, ROUTES, UNTIL_STOPPED), STRICT)).toContainEqual(
+      containing("answered 500"),
+    );
   });
 
   // The case that decides whether this gate is usable at all: junk refused with
@@ -391,14 +414,14 @@ describe("what the fuzzer refuses", () => {
   // route of every app that validates.
   test("but not the same handler written properly, which refuses the same junk", async () => {
     using app = serving();
-    const result = await fuzzing(app, ROUTES);
+    const result = await fuzzing(app, ROUTES, UNTIL_STOPPED);
     expect(against(result, CAREFUL)).toEqual([]);
     expect(against(result, OK)).toEqual([]);
   });
 
   test("a handler that answers with its own stack trace", async () => {
     using app = serving();
-    expect(against(await fuzzing(app, ROUTES), TRACING)).toContainEqual(
+    expect(against(await fuzzing(app, ROUTES, UNTIL_STOPPED), TRACING)).toContainEqual(
       containing("no stack trace in the body"),
     );
   });
@@ -410,19 +433,20 @@ describe("what the fuzzer refuses", () => {
   // did before a frame line was required.
   test("but not a correct refusal that names an error type and a file", async () => {
     using app = serving();
-    expect(against(await fuzzing(app, ROUTES), CAREFUL)).toEqual([]);
+    expect(against(await fuzzing(app, ROUTES, UNTIL_STOPPED), CAREFUL)).toEqual([]);
   });
 
   test("a route that says JSON and sends something else", async () => {
     using app = serving();
-    expect(against(await fuzzing(app, ROUTES), LYING)).toContainEqual(containing("not JSON"));
+    expect(against(await fuzzing(app, ROUTES, UNTIL_STOPPED), LYING)).toContainEqual(
+      containing("not JSON"),
+    );
   });
 
   test("a route that stops answering at all", async () => {
     using app = serving();
-    expect(against(await fuzzing(app, [HANGING, ...ROUTES]), HANGING)).toContainEqual(
-      containing("nothing arrived within"),
-    );
+    const hung = await fuzzing(app, [HANGING, ...ROUTES], UNTIL_THE_HANG);
+    expect(against(hung, HANGING)).toContainEqual(containing("nothing arrived within"));
   });
 
   // Round-robin, and this is what it buys: a route that eats the budget cannot
@@ -430,14 +454,14 @@ describe("what the fuzzer refuses", () => {
   // route, everything below `/hang` here would never be reached.
   test("and a route that eats the budget does not starve the rest", async () => {
     using app = serving();
-    await fuzzing(app, [HANGING, ...ROUTES]);
+    await fuzzing(app, [HANGING, ...ROUTES], UNTIL_THE_HANG);
     const hits = app.hits();
     for (const { path } of ROUTES) expect(hits.get(path) ?? 0).toBeGreaterThan(0);
   });
 
   test("a clean app is a clean run that still records its seed", async () => {
     using app = serving();
-    const result = await fuzzing(app, [OK], 4242);
+    const result = await fuzzing(app, [OK], FOR_THE_BUDGET, 4242);
     expect(result.failures).toEqual([]);
     expect(result.stopped).toBe(false);
     expect(result.requests).toBeGreaterThan(0);
@@ -451,7 +475,7 @@ describe("what the fuzzer refuses", () => {
   // three surfaces called it every failure.
   test("keeps every failure it found and prints the first twenty-five", async () => {
     using app = serving();
-    const result = await fuzzing(app, [STRICT]);
+    const result = await fuzzing(app, [STRICT], UNTIL_STOPPED);
     expect(result.failures.length).toBeGreaterThan(25);
     const { problems } = fuzzVerdict(result);
     expect(problems.filter(({ message }) => message.includes("replay it with:"))).toHaveLength(25);
@@ -466,33 +490,47 @@ describe("what the fuzzer refuses", () => {
   // number is never read as "and no more than these".
   test("and stops once an app has failed enough to have been answered", async () => {
     using app = serving();
-    const result = await fuzzing(app, [STRICT]);
+    const result = await fuzzing(app, [STRICT], UNTIL_STOPPED);
     expect(result.stopped).toBe(true);
     expect(fuzzVerdict(result).problems.map(({ message }) => message)).toContainEqual(
       containing(`stopped at ${result.failures.length} failures`),
     );
   });
 
-  // The ramp's exemption is this step's exemption, read from the same input: a
-  // route a repo declared destructive, credentialed or outbound is not one to
+  // A route a repo declared destructive, credentialed or outbound is not one to
   // send generated DELETEs at. What it costs is stated rather than silent — a
   // table saying "5 routes fuzzed" over an app serving six is the shape of a
   // floor quietly covering less than it claims.
-  test("a route the ramp was told not to reach is not fuzzed either", async () => {
+  test("a route route-allowlist names is not fuzzed", async () => {
     using app = serving();
-    const result = await fuzzing(app, ROUTES, 1, new Set(["POST /strict/:id"]));
+    const result = await fuzzing(
+      app,
+      ROUTES,
+      UNTIL_STOPPED,
+      1,
+      waivers(ROUTES, "POST /strict/:id -- it writes"),
+    );
     expect(app.hits().get(STRICT.path)).toBeUndefined();
     expect(result.routes).toBe(ROUTES.length - 1);
     expect(result.waived).toBe(1);
-    expect(fuzzVerdict(result).table).toContain("| Routes waived by route-allowlist | 1 |");
+    const verdict = fuzzVerdict(result);
+    expect(verdict.table).toContain("| Routes waived by route-allowlist | 1 |");
+    expect(verdict.problems.filter(({ message }) => message.includes("route-allowlist"))).toEqual(
+      [],
+    );
   });
 
-  // Every route waived, which is a repo that has argued each of them out of the
-  // ramp by name. Nothing to send is not a failure, and it is not a silence
-  // either.
+  // Every route waived, which is a repo that has argued each of them out by
+  // name. Nothing to send is not a failure, and it is not a silence either.
   test("and a table that is entirely waived is a run with nothing to send", async () => {
     using app = serving();
-    const result = await fuzzing(app, [OK], 1, new Set(["GET /ok/:id"]));
+    const result = await fuzzing(
+      app,
+      [OK],
+      UNTIL_STOPPED,
+      1,
+      waivers([OK], "GET /ok/:id -- it reads a vault"),
+    );
     expect(result.requests).toBe(0);
     expect(result.routes).toBe(0);
     expect(fuzzVerdict(result).problems).toEqual([]);
@@ -500,7 +538,7 @@ describe("what the fuzzer refuses", () => {
 
   test("a failure carries the command that sends it again", async () => {
     using app = serving();
-    const result = await fuzzing(app, [STRICT]);
+    const result = await fuzzing(app, [STRICT], UNTIL_STOPPED);
     const [first] = result.failures;
     expect(first?.curl).toContain("-X POST");
     expect(first?.status).toBe(500);
@@ -509,40 +547,72 @@ describe("what the fuzzer refuses", () => {
   });
 });
 
-describe("what the fuzzer must not disturb", () => {
-  /** The route log as the ramp step captures it: the table, and the counts at that moment. */
-  function snapshot(app: App, routes: readonly Route[]): RouteLog {
-    const hits = app.hits();
-    return {
-      routeTable: [...routes],
-      counts: routes.map((route) => ({ ...route, count: hits.get(route.path) ?? 0 })),
-    };
-  }
+/**
+ * The hatch the fuzzer owns, graded by the fuzzer because nothing else in the
+ * job reads it. The likeliest wrong fuzzer only skips what the allowlist
+ * names: it keeps an exemption that names nothing or says nothing about why,
+ * and fuzzes on past one. Each case below fails it.
+ */
+describe("what the fuzzer refuses before it sends anything", () => {
+  const refusals = (routes: readonly Route[], allowlist: string): string[] => {
+    const hatch = allowlisted(routes, allowlistFrom(allowlist, "route-allowlist"));
+    return "refused" in hatch ? hatch.refused.map(({ message }) => message) : [];
+  };
 
-  // What this proves is the half that is about values: the floor is a function
-  // of two snapshots, and a run of the fuzzer between two readings of the same
-  // pair cannot change what it says — while the app's own counters demonstrably
-  // move past what the second snapshot recorded, which is the traffic that
-  // would have been inside it had the step run earlier. That the step *is*
-  // ordered after the second capture is a fact about `action.yml`, and
-  // `tests/action-evidence.test.ts` is what holds it; no arrangement of these
-  // two pure calls could.
-  test("a run between two readings of one pair cannot move the floor", async () => {
+  test("an entry that waives a route without saying why is refused, once", () => {
+    expect(refusals(ROUTES, "POST /strict/:id")).toEqual([
+      containing("route-allowlist waives POST /strict/:id without saying why"),
+    ]);
+  });
+
+  test("an entry naming a route the app does not serve is a stale hatch", () => {
+    expect(refusals(ROUTES, "DELETE /strict/:id -- it deletes")).toEqual([
+      containing("route-allowlist names DELETE /strict/:id, which this app does not serve"),
+    ]);
+  });
+
+  test.each(["/strict/:id -- no method", "POST -- no path", "POST /a /b -- two paths"])(
+    "an entry that is not a route (%s) says so",
+    (entry) => {
+      expect(refusals(ROUTES, entry)).toEqual([containing("is not a route — write 'METHOD /path")]);
+    },
+  );
+
+  test("the method is read in either case, and a reasoned entry naming a served route is the hatch working", () => {
+    expect(refusals(ROUTES, "post /strict/:id -- it writes")).toEqual([]);
+  });
+
+  // Security 2: the refusals were reported after the whole budget had been
+  // spent sending generated requests, and a mistyped entry keeps nothing out,
+  // so the route it was written for, destructive or reaching past this box,
+  // was fuzzed for the run. The step as the action runs it, against an app
+  // counting what it takes: a refused allowlist sends nothing.
+  test("the step sends nothing when route-allowlist is refused", async () => {
     using app = serving();
-    const table = [OK];
-    const before = snapshot(app, table);
-    await fetch(`${app.origin}/ok/1`);
-    const after = snapshot(app, table);
-
-    const allowlist = allowlistFrom("", "route-allowlist");
-    const first = routeCoverage(before, after, allowlist);
-    const run = await fuzzing(app, table);
-    const second = routeCoverage(before, after, allowlist);
-
-    expect(run.requests).toBeGreaterThan(0);
-    expect(app.hits().get(OK.path) ?? 0).toBeGreaterThan(after.counts[0]?.count ?? 0);
-    expect(second).toEqual(first);
-    expect(second.problems).toEqual([]);
+    const root = await scratch();
+    const log = join(root, "route-log.json");
+    await Bun.write(log, JSON.stringify({ routeTable: [OK, STRICT] }));
+    const step = Bun.spawn(["bun", FUZZ_MAIN], {
+      env: {
+        PATH: Bun.env["PATH"] ?? "",
+        GITHUB_RUN_ID: "1",
+        INPUT_HEALTH_URL: `${app.origin}/health`,
+        INPUT_ROUTE_LOG: log,
+        INPUT_ROUTE_ALLOWLIST: "POST /strict/:ids -- it charges a card",
+        INPUT_FUZZ_SEED: "7",
+        INPUT_NIGHTLY: "false",
+        INPUT_REPORT_FILE: join(root, "fuzz.json"),
+        INPUT_STEP_SUMMARY: join(root, "summary.md"),
+      },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [said, status] = await Promise.all([new Response(step.stdout).text(), step.exited]);
+    expect(status).toBe(1);
+    expect(said).toContain(
+      "route-allowlist names POST /strict/:ids, which this app does not serve",
+    );
+    expect(app.hits()).toEqual(new Map());
   });
 });
 

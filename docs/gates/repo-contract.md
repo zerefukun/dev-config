@@ -1,7 +1,7 @@
 # The repo contract
 
-Every gate above rests on a string somewhere: a `packageManager` field, an
-`extends` path, a `[test]` block, a hook definition. Each of those can be
+Every gate in this repo rests on a string somewhere: a `packageManager` field,
+an `extends` path, a `[test]` block, a hook definition. Each of those can be
 deleted, renamed or never written, and when one is, the gate it feeds does not
 fail — it stops existing. `repo-contract` reads them and says so.
 
@@ -13,9 +13,11 @@ fail — it stops existing. `repo-contract` reads them and says so.
 | Every `peerDependencies` range refuses some version                                                                                                                      | a range that accepts everything says what declaring no peer says, and `bun add` writes one                                                                   |
 | `bun run typecheck` reaches `bun check --no-script`, directly or through package scripts                                                                                 | it is check.yml's typecheck lane; without the flag `bun check` runs the repo's own `check` script, which runs `typecheck`                                    |
 | `oxlint-tsgolint` present, when `.oxlintrc.json` extends `oxlint.base.json`                                                                                              | without it oxlint runs the base's type-aware rules over nothing and reports clean                                                                            |
+| `bun.lock` resolves an `oxlint-tsgolint` inside the range every resolved `oxlint` declares for it                                                                        | bun installs a pair outside that range without a warning, and the type-aware rules run on a binary that oxlint release was not built against                 |
 | `tsconfig.json` extends this repo, `.oxlintrc.json` extends this repo, the knip config imports `knip.base.ts`                                                            | a repo that stopped inheriting stops inheriting silently                                                                                                     |
 | `bunfig.toml` declares a window of 3 days or more, exact exclusions, `exact`, and a coverage floor a run can fail                                                        | the supply-chain window and the coverage floor are per-repo copies with no `extends` to hold them                                                            |
 | every rule, category and option `.oxlintrc.json` switches off carries a reason above it                                                                                  | a switch-off nobody wrote a reason for reads the same as one added to get a run green                                                                        |
+| every check of `tsconfig.base.json` a tracked `tsconfig*.json` sets back carries a reason above it                                                                       | a check set back with no reason reads the same as one set back to get a build green                                                                          |
 | `.oxlintrc.json` `extends` the shared bases and nothing else, each once, and no oxlint config sits below the root                                                        | a second config is read after the root's and wins over it, in a file this gate never opens                                                                   |
 | `.oxlintrc.json` extends `design-system.base.json`, when any manifest depends on `tailwindcss`                                                                           | without it a page using a raw colour, an arbitrary value or a restyled shared component passes lint                                                          |
 | `lefthook.yml` scans staged files with gitleaks pre-commit, runs nothing pre-push, and nothing merges into it                                                            | a committed key is burned, the chain runs once on the state that lands, at landing or in CI, and the gate reads only that file                               |
@@ -87,10 +89,10 @@ question of what else that hand-rolled step drops is answered.
 **A switch-off carries a reason, and the reason is owed per switch-off.** What
 is graded is every entry under `rules`, under any `overrides[].rules`, under
 `categories`, and under `options` — a category switched off takes every rule in
-it, and `options.typeAware: false` takes the twelve type-aware rules the base
-sets at `error`, with no flag in `bun run lint` to put them back. Tightening a
-rule or reconfiguring it argues its case in what the rule now demands; switching
-one off argues nothing.
+it, and `options.typeAware: false` takes every type-aware rule the base sets at
+`error`, with no flag in `bun run lint` to put them back. Tightening a rule or
+reconfiguring it argues its case in what the rule now demands; switching one off
+argues nothing.
 
 A comment above a line says nothing about which of that line's entries it
 excuses, so a switch-off sharing its line with another entry a reason could be
@@ -102,20 +104,21 @@ what no comment would, and are refused at the same bar `allowlistFrom` holds a
 waiver to.
 
 **The reason covers the run of switch-offs under it, not just the first.** One
-argument routinely retires several rules at once — the paragraph explaining why
-`pedantic`, `style`, `restriction` and `nursery` are not adopted is one reason
-about four of them — and demanding a comment per line would be demanding the
-same paragraph four times, which is how a rule teaches people to write a token
-instead of an argument. So the group is the contiguous run of **switch-offs**
-under the comment, written one per line.
+argument routinely retires several rules at once: in `oxlint.base.json` one
+paragraph is the reason for switching off both
+`react/jsx-no-constructed-context-values` and
+`react/no-object-type-as-default-prop`, and demanding a comment per line would
+be demanding the same paragraph twice, which is how a rule teaches people to
+write a token instead of an argument. So the group is the contiguous run of
+**switch-offs** under the comment, written one per line.
 
 What continues that run is a switch-off and never merely an entry, which is the
 whole tightness of it: a rule left ON is a different subject, so the comment
-above _that_ is about the rule staying on and cannot be spent further down.
-`oxlint.base.json` is the case the looser reading was caught on —
-`"react/exhaustive-deps": "warn"` sits between the JSX runtime's reason and
-`oxc/no-map-spread`, and a walk counting entries handed the first's argument to
-the second in silence. A blank line closes the run as well, and so does any line
+above _that_ is about the rule staying on and cannot be spent further down. In
+`oxlint.base.json`, `no-console` and `no-empty` stay at `error` between
+`no-await-in-loop`'s reason and the switch-off of `eslint/no-underscore-dangle`:
+were the second's own reason deleted, a walk counting entries would hand it the
+first's in silence. A blank line closes the run as well, and so does any line
 carrying nothing at all: the `"rules": {` a block opens with, or a multi-line
 entry's continuation. A comment above the block's own opening line is therefore
 about the block, and cannot be spent on a switch-off inside it.
@@ -157,13 +160,13 @@ wires Tailwind into its build — `@tailwindcss/vite` among them — and a name
 rather than a prefix, since `tailwind-merge` is a class-joining helper a repo
 can carry with no Tailwind build at all. A shared component library that states
 Tailwind as a peer owes the base too: its components are written in the classes
-every rule but `no-restyle` reads, and `no-restyle` is the one a repo switches
-off inside its own components directory. No exemption waives the fact:
-`config-lineage` changes where the base may be read from, by its file name as
-for the shared base, and never whether a Tailwind repo reads it. A repo with no
-`tailwindcss` anywhere owes nothing here. What the
-base enforces, and what a repo declares beside it, is
-[README's "Design system"](../../README.md#design-system).
+the base's rules read, and README's override switches off only `no-restyle`,
+`no-arbitrary-values` and `require-static-classes` inside a repo's own
+components directory. No exemption waives the fact: `config-lineage` changes
+where the base may be read from, by its file name as for the shared base, and
+never whether a Tailwind repo reads it. A repo with no `tailwindcss` anywhere
+owes nothing here. What the base enforces, and what a repo declares beside it,
+is [README's "Design system"](../../README.md#design-system).
 
 `ignorePatterns` is deliberately not graded, and the honest reason is not that it
 is a different kind of setting — it silences every rule for the paths it names,
@@ -181,6 +184,56 @@ walk of that text: the walk carries the path it is inside, which is what tells a
 different vocabulary. `oxlint.base.json` follows the same convention for its own
 switch-offs, and is held to this rule by a test that strips one of its reasons
 and requires exactly that finding back.
+
+**A tsconfig that sets a check back owes the same reason.** Every
+`tsconfig*.json` the gate lists, at the root or below it, tracked or untracked
+where git would keep it, is read on its own text, and a `compilerOptions` member
+that sets back a check the shared base states needs a comment directly above it,
+read exactly as a lint switch-off's is: one per line, the reason covering the
+run of them under it, an empty comment no reason, and a blank line or any other
+entry ending the run. One implementation reads the reason for both files. A
+check set back is a boolean the base states, written with the other value, such
+as `strict: false`, `allowUnreachableCode: true` or `verbatimModuleSyntax:
+false`. It is also a check the base states written `null`, which un-states it
+and hands it back to TypeScript's default, whatever that default is; and a
+member of TypeScript's `strict` family written `false`, since the base turns
+those on by stating `strict` alone (a family member written `null` is left to
+`strict`, and owes nothing). A tsconfig that will not parse is named, as every
+config the contract reads is, and the other checks still report.
+
+The checks are read from `tsconfig.base.json` as shipped at the ref the action
+runs from, so a flag added to the base or dropped from it changes the rule with
+no list here to edit. Every boolean the base states is a check except five that
+choose resolution or emit rather than what the checker refuses:
+`allowImportingTsExtensions`, `esModuleInterop`, `resolveJsonModule`, `noEmit`
+and `skipLibCheck`. A boolean added to the base later is a check until someone
+names it there, which is the safe direction. A flag the base does not state owes
+nothing, and nor does a flag written at the base's own value. The base is read
+at the action's ref while the repo extends the package's: a repo moves both pins
+in one pull request, and between two releases the bases differ only by what a
+release changed. `config-lineage` does not waive it, since that exemption waives
+where a config inherits from and never what it sets back.
+
+**What this cannot catch.** No `extends` chain is followed, which leaves two
+ways to set a check back without writing a weakening the gate can see. An
+`extends` array whose entry after the base relaxes it is applied over the base,
+since TypeScript reads later entries over earlier ones. And a nested tsconfig
+that never extends the base drops every check without writing a `false`. Closing
+either is a lineage rule for every tsconfig in a tree, which nobody has ruled
+on.
+
+**The type-aware pair is read out of `bun.lock`.** Each `oxlint` release
+declares the range of `oxlint-tsgolint` it runs as an optional peer
+(`>=7.0.2001` in 1.80.0, `>=7.0.2003` in 1.88.0), and bun installs a pair
+outside it without a warning. The lock records each resolved package's
+`peerDependencies` beside the version it resolved, so the gate holds every
+resolved `oxlint-tsgolint` to the range of every resolved `oxlint` with no
+install, which an action never has. It reads the lock alone, because the
+manifest's spec says what was asked for and the lock says what landed. Nothing
+is held where the repo has no `bun.lock`, where the lock resolves no
+`oxlint-tsgolint` (the manifest check above owns a missing one), or where an
+`oxlint` declares no range for it. A lock that will not parse is named rather
+than passed.
 
 The knip case is the one that reads as arbitrary and is not: knip resolves
 `knip.json` before `knip.ts`, and a JSON config cannot import anything. A repo
@@ -267,25 +320,34 @@ has to be remembered: everything below is derived from that word rather than
 turned on one gate at a time, because a checklist is something you can do half
 of.
 
-| What `"live"` requires                                                   | When                                                        | Why it cannot wait                                                                                                                                              |
-| ------------------------------------------------------------------------ | ----------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| a Sentry SDK among what the workspace ships                              | always                                                      | a failure only the user sees is one nobody fixes                                                                                                                |
-| the `check.yml` call passes `database: postgres` or `database: external` | the repo owns a database                                    | nothing replays the schema otherwise, and the gate below has no job to run in                                                                                   |
-| the `check.yml` call passes `upgrade-gate: true`                         | the repo owns a database, and the call is not `external`    | from the first deploy the migration lineage is a one-way record — editing a migration that has already run is a silent no-op on every database that has seen it |
-| `scripts/backup.sh` exists and is executable                             | the repo owns a database, and `data-jobs-external` is empty | an undumped database is one nobody has                                                                                                                          |
-| `scripts/restore-drill.sh` exists and is executable                      | the repo owns a database, and `data-jobs-external` is empty | a backup nobody has restored is a backup nobody has                                                                                                             |
-| a timer/service pair that runs each of them                              | the repo owns a database, and `data-jobs-external` is empty | a script nothing runs on a schedule is one that ran the day it was written (below)                                                                              |
-| `@playwright/test` among what the workspace declares                     | the repo ships a browser surface: `react-dom` or `astro`    | a page nobody opens in CI is one that breaks in front of a user                                                                                                 |
-| a spec written with `@zerefukun/dev-config/invariant-sweep`              | the repo ships a browser surface: `react-dom` or `astro`    | a spec on Playwright's own `test` passes without noticing a console error, an uncaught error or a page scrolling sideways                                       |
-| a `ci.yml` step that runs `playwright test`                              | the repo ships a browser surface: `react-dom` or `astro`    | a suite CI never runs is one that ran the day it was written                                                                                                    |
+A field that is absent, or reads anything but those two words, is its own
+problem and the only one reported — a repo that has not said which it is gets
+graded against neither set of rules, because choosing for it is exactly what the
+field exists to prevent.
+
+| What `"live"` requires                                                     | When                                                        | Why it cannot wait                                                                                                                                              |
+| -------------------------------------------------------------------------- | ----------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| a Sentry SDK among what the workspace ships                                | always                                                      | a failure only the user sees is one nobody fixes                                                                                                                |
+| the `check.yml` call passes `database: postgres` or `database: external`   | the repo owns a database                                    | nothing replays the schema otherwise, and the gate below has no job to run in                                                                                   |
+| the `check.yml` call passes `upgrade-gate: true`                           | the repo owns a database, and the call is not `external`    | from the first deploy the migration lineage is a one-way record — editing a migration that has already run is a silent no-op on every database that has seen it |
+| `scripts/backup.sh` exists and is executable                               | the repo owns a database, and `data-jobs-external` is empty | an undumped database is one nobody has                                                                                                                          |
+| `scripts/restore-drill.sh` exists and is executable                        | the repo owns a database, and `data-jobs-external` is empty | a backup nobody has restored is a backup nobody has                                                                                                             |
+| a timer/service pair that runs each of them                                | the repo owns a database, and `data-jobs-external` is empty | a script nothing runs on a schedule is one that ran the day it was written (below)                                                                              |
+| a test importing `@zerefukun/dev-config/request-timing/conformance`        | the repo owns a database and serves HTTP, unless waived     | an operation nobody times is one whose slow wait nobody can name (below)                                                                                        |
+| a test importing `@zerefukun/dev-config/request-timing/conformance/effect` | as the row above, and a manifest ships `effect`             | an Effect that resumes a fiber in its waker's context counts waits in the wrong record, and no other gate sees it (below)                                       |
+| `@playwright/test` among what the workspace declares                       | the repo ships a browser surface: `react-dom` or `astro`    | a page nobody opens in CI is one that breaks in front of a user                                                                                                 |
+| a spec written with `@zerefukun/dev-config/invariant-sweep`                | the repo ships a browser surface: `react-dom` or `astro`    | a spec on Playwright's own `test` passes without noticing a console error, an uncaught error or a page scrolling sideways                                       |
+| a `ci.yml` step that runs `playwright test`                                | the repo ships a browser surface: `react-dom` or `astro`    | a suite CI never runs is one that ran the day it was written                                                                                                    |
 
 Only crash reporting is owed by every live repo. The rest is scoped to what the
 repo is: the data rules are about a database, and half this fleet is a static
 site with a hostname and no schema — demanding a backup script of one would
 teach people to write a script that does nothing in order to get past a gate.
 The three browser rules are the same shape from the other side, and an API owes
-none of them. The upgrade gate is scoped the same way for a harder
-reason than symmetry: `check.yml` **refuses** `upgrade-gate: true` without
+none of them. The request-timing test is owed where a database and HTTP meet: a
+server answering requests out of a database is where an operation's time goes to
+waits, and a static site or a worker with no route owes nothing here. The
+upgrade gate is scoped the same way for a harder reason than symmetry: `check.yml` **refuses** `upgrade-gate: true` without
 `database: postgres`, so asking for it there would be this contract demanding
 the one configuration the shared workflow rejects. `external` is that same state
 and the only other one — the gate that input names belongs to the Postgres job,
@@ -426,7 +488,65 @@ workspace's script names that workspace's script, not the root's. Two more facts
 decide its verdicts. A required flag may sit anywhere after the argument, so
 `bun check -p . --no-script` passes. And a bare `bun check` is read as what Bun
 does with it, a run of the repo's own `check` script, which in this fleet runs
-`typecheck` again: it reaches the type checker only if that script does.
+`typecheck` again: it reaches the type checker only if that script does. A repo
+with a type generator runs it inside `typecheck`, ahead of the checker, as in
+`next typegen && bun check --no-script`. That script passes, since the reading
+splits it into commands and the second has `bun check` at its head.
+
+**"Serves HTTP" is three names, among what a manifest ships.** They are the
+frameworks [request timing](../exports/request-timing.md) has an entry connector
+for: `elysia`, `next` and `@tanstack/react-start`, in `dependencies` or
+`optionalDependencies` of any manifest in the workspace, the fields the crash
+SDK is read from. A library that takes one as a peer, or tests against one as a
+devDependency, serves nothing, and this repo is that case: its connector suites
+hold `elysia`, `next` and `@tanstack/react-start` as devDependencies.
+
+**The test is an import Bun's parser reads.** A live repo that owns a database
+and serves HTTP has at least one `*.test.ts` or `*.test.tsx` importing
+`@gokayo43/dev-config/request-timing/conformance`, which is where an app runs
+`requestTimingConforms` against its booted server. The file is read with
+`Bun.Transpiler`'s `scanImports`, so the specifier in a comment, a string or a
+template is no import, and nor is an `import type`, which is erased and runs
+nothing. Never its `scan`, which evaluates the Bun macros a file imports and
+would run code from the tree under review inside the gate, where it could
+forge every verdict this contract reports. A `*.spec.ts` does not count, since
+that is the Playwright lane and the kit is a `bun test` import. A test file
+that will not parse is named in the problem, because what it imports is then
+unknown. What the scan cannot see is which of the kit's exports a test imports
+and whether it calls it: a test importing only `requestTimingRoutesConform`, the
+route-tree check, an import whose binding is never used, or a `test.skip`
+around the call all pass, and review is what catches them. The same holds for
+the Effect check below: the scan sees its import, not its call.
+
+**A repo that runs Effect also runs the kit's Effect check.** Where any
+manifest of the workspace names `effect` in `dependencies` or
+`optionalDependencies`, the fields "serves HTTP" is read from, the same scan
+asks for a test importing `@gokayo43/dev-config/request-timing/conformance/effect`,
+which is where an app runs `requestTimingEffectConforms` with its own `effect`.
+An `effect` that is a devDependency alone, or that reaches the app only through
+another package, does not count. The check is owed because request timing
+carries the operation in `AsyncLocalStorage` alone, which is right inside an
+Effect program only on effect 4.0.1 or later on a host whose
+`process.getBuiltinModule` finds `node:async_hooks`; elsewhere Effect resumes a
+woken fiber in the context of the fiber that woke it, the record counts the
+wait in the wrong operation, and every other gate stays green. A missing check
+is its own problem, beside the kit's where both are missing; it offers the
+waiver below only where the kit's test is missing too, since beside that test
+the waiver is refused.
+
+**When request timing does not time the operations, `operations-timed-otherwise`
+says why.** Two reasons are honest, and the value names which: the operations
+are timed some other way, and it says how; or the repo serves nothing a
+connector covers, such as a Next app whose work is all pages, server components
+and server actions ([request timing's Next.js section](../exports/request-timing.md#nextjs-route-handlers)
+lists what its connector leaves alone), and it says what it serves. It is
+`data-jobs-external`'s shape: the reason is the waiver, an empty or whitespace
+value is a repo that owes the test, and it is refused once it waives nothing. That is a repo that does not owe the rule, `dev` or with no
+database or no HTTP, and a repo that has a test importing the kit or its Effect
+check beside it, whose two answers to how its operations are timed are one too
+many; the problem names that test. It waives the conformance test and the
+Effect check with it, and nothing else. A repo that has not declared its `lifecycle`
+is graded against neither set of rules, so the input is not graded there either.
 
 ### A scheduled job is three files
 
@@ -508,11 +628,6 @@ belongs to the scaffold rather than to this gate:
 carries what the template owes here — the `restore-drill` unit pair (it ships
 only `backup`'s today), and the drill dropping its throwaway when it passes.
 
-A field that is absent, or reads anything but those two words, is its own
-problem and the only one reported — a repo that has not said which it is gets
-graded against neither set of rules, because choosing for it is exactly what the
-field exists to prevent.
-
 ## It only moves up
 
 `dev` is where every repo starts and says nothing about anyone, so anything is
@@ -529,8 +644,8 @@ as well, and the two are compared:
 | `live`   | absent    | refused — the same edit, less visible      |
 
 Writing `dev` over `live`, or deleting the field, sheds backups, a rehearsed
-restore, crash reporting, the swept browser suite and the upgrade gate in one
-edit that reviews as a whitespace change. Deleting the manifest outright is
+restore, crash reporting, the swept browser suite, the request-timing tests and
+the upgrade gate in one edit that reviews as a whitespace change. Deleting the manifest outright is
 refused a line earlier, by the rule that a repo has a `package.json` at all.
 
 The base ref is the merge base with the branch a pull request targets, or the

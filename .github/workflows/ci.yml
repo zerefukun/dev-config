@@ -7,8 +7,8 @@ on:
   # The fleet's 02:00 UTC slot, for the half of the nightly this repo can run on
   # itself: the filing below. The other half — the long property budget — is set
   # by the test-suite action, which this repo substitutes for (see the step that
-  # runs `bun test` and the exemptions above it), so the numbers stay in that
-  # action rather than being restated here for a suite of six properties.
+  # runs the suite and the exemptions above it), so the numbers stay in that
+  # action rather than being restated here for this suite's properties.
   schedule:
     - cron: "0 2 * * *"
 
@@ -22,7 +22,9 @@ concurrency:
 jobs:
   check:
     runs-on: ubuntu-24.04
-    timeout-minutes: 15
+    # The suite's measured time plus one case hung to its bound, so that case is
+    # named before the job is cancelled: CLAUDE.md's Commands has the numbers.
+    timeout-minutes: 20
 
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -118,7 +120,7 @@ jobs:
       # `--coverage` by hand: it is the one guarantee of the substituted action
       # this step does keep, and without it the floor above it declares is
       # applied to nothing. docs/gates/test-suite.md.
-      - run: bun test --coverage
+      - run: bun run test --coverage
         env:
           # Neither has a default, deliberately: the conformance suite flushes
           # its Redis and the database suites drop databases on their server,
@@ -135,22 +137,13 @@ jobs:
         with:
           command: stop
 
-      # The k6 ramp this repo ships is the one file its own linter cannot read,
-      # so it gets executed instead: both branches, against a stub server.
-      - name: Execute the capacity ramp
-        run: |
-          set -euo pipefail
-          # shellcheck source=/dev/null
-          . .github/actions/_lib/k6.sh
-          bun tests/capacity-script.ts
-
       # Every JSON file nothing else here reads. What is skipped is a file some
       # other tool already parses, in a dialect `JSON.parse` refuses: oxlint's
       # schema declares `allowComments` and `allowTrailingCommas`, oxfmt reads
       # its own config the same way, and TypeScript has always taken both; `bun
       # run check` above fails loudly on a broken one. So the skip has to match
       # where that tool actually looks. oxlint reads a config from the directory
-      # it is linting, at any depth, and the base it extends with it; oxfmt reads
+      # it is linting, at any depth, and each base it extends with it; oxfmt reads
       # the one at the root; `bun check` here reads the root project alone, so a
       # tsconfig in a subdirectory is parsed by nothing and belongs in this step.
       - name: Parse every JSON config
@@ -161,7 +154,7 @@ jobs:
           # `core.quotepath`, and a newline in one would be two entries. Neither
           # is a name this repo has, and both are names a consumer could.
           mapfile -t -d '' files < <(git -c core.quotepath=false ls-files -z '*.json' |
-            grep -zvE '((^|/)(\.oxlintrc|oxlint\.base)\.json|^\.oxfmtrc\.json|^tsconfig(\.[^/]+)?\.json)$')
+            grep -zvE '((^|/)(\.oxlintrc|oxlint\.base|design-system\.base)\.json|^\.oxfmtrc\.json|^tsconfig(\.[^/]+)?\.json)$')
           bun -e '
             const { report } = await import("./.github/actions/_lib/gate.ts");
             const problems = [];

@@ -208,9 +208,11 @@ Workers running tests of one spec in parallel take turns at the file through a
 lock, `<spec>.counts.json.lock`, which names the process holding it, and each
 writes the file whole as `<spec>.counts.json.<pid>.writing` before moving it
 into place. A lock whose process is gone, left by a worker that was killed
-while writing, is taken over. Whoever next takes the lock removes what killed
-workers left beside it: a staging file, and the files under
-`<spec>.counts.json.lock.` that name a process that is gone. A lock held by a
+while writing, is taken over, and so is one whose process has exited and is
+still listed in `/proc` because nothing has reaped it yet. A stopped holder,
+one paused with SIGSTOP, still holds it. Whoever next takes the lock removes what killed
+workers left beside it: a staging file, and the files named
+`<spec>.counts.json.lock.<suffix>` that name a process that is gone. A lock held by a
 live process for 10 seconds fails the test with a message naming the lock and
 the process. The lock proves a holder alive from `/proc`, so the command runs
 on Linux only.
@@ -317,7 +319,7 @@ it, in check and command alike.
   hands to `connectToServer` reaches its server without the page raising the
   event the origin rule reads.
 - **A route that fetches the real response.** `route.fulfill({ response: await
-route.fetch() })` answers the page with live data, and the page sees a
+  route.fetch() })` answers the page with live data, and the page sees a
   fulfilled response, which is what a stub is. Playwright's own request to the
   origin is not one the page made.
 - **Work on a timer slower than two idle rounds.** A page that mutates the DOM a

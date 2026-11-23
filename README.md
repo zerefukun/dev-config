@@ -42,17 +42,17 @@ to override a shared setting, the override carries a comment naming the reason.
 Each gate has a reference page of its own. This file holds the map and the
 settings every repo shares; what a single gate asserts, and why, lives beside it:
 
-| Gate                  | Page                                                                                                                                                                                                                                                                                                               |
-| --------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `repo-contract`       | [docs/gates/repo-contract.md](docs/gates/repo-contract.md)                                                                                                                                                                                                                                                         |
-| `stack-gate`          | [docs/gates/stack-gate.md](docs/gates/stack-gate.md)                                                                                                                                                                                                                                                               |
-| `suppression-hygiene` | [docs/gates/suppression-hygiene.md](docs/gates/suppression-hygiene.md)                                                                                                                                                                                                                                             |
-| `shell-scripts`       | [docs/gates/shell-scripts.md](docs/gates/shell-scripts.md)                                                                                                                                                                                                                                                         |
-| `compose-lint`        | [docs/gates/compose-lint.md](docs/gates/compose-lint.md)                                                                                                                                                                                                                                                           |
-| `db-gate`             | [docs/gates/db-gate.md](docs/gates/db-gate.md), plus [upgrade-path.md](docs/gates/upgrade-path.md), [capacity.md](docs/gates/capacity.md), [route-compat.md](docs/gates/route-compat.md) and [fuzz.md](docs/gates/fuzz.md) for the replay, the ramp it can add, the routes it holds and the junk it throws at them |
-| `mutation-lane`       | [docs/gates/mutation-lane.md](docs/gates/mutation-lane.md)                                                                                                                                                                                                                                                         |
-| `duplicate-code`      | [docs/gates/duplicate-code.md](docs/gates/duplicate-code.md)                                                                                                                                                                                                                                                       |
-| `test-suite`          | [docs/gates/test-suite.md](docs/gates/test-suite.md)                                                                                                                                                                                                                                                               |
+| Gate                  | Page                                                                                                                                                                                                                                                   |
+| --------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `repo-contract`       | [docs/gates/repo-contract.md](docs/gates/repo-contract.md)                                                                                                                                                                                             |
+| `stack-gate`          | [docs/gates/stack-gate.md](docs/gates/stack-gate.md)                                                                                                                                                                                                   |
+| `suppression-hygiene` | [docs/gates/suppression-hygiene.md](docs/gates/suppression-hygiene.md)                                                                                                                                                                                 |
+| `shell-scripts`       | [docs/gates/shell-scripts.md](docs/gates/shell-scripts.md)                                                                                                                                                                                             |
+| `compose-lint`        | [docs/gates/compose-lint.md](docs/gates/compose-lint.md)                                                                                                                                                                                               |
+| `db-gate`             | [docs/gates/db-gate.md](docs/gates/db-gate.md), plus [upgrade-path.md](docs/gates/upgrade-path.md), [route-compat.md](docs/gates/route-compat.md) and [fuzz.md](docs/gates/fuzz.md) for the replay, the routes it holds and the junk it throws at them |
+| `mutation-lane`       | [docs/gates/mutation-lane.md](docs/gates/mutation-lane.md)                                                                                                                                                                                             |
+| `duplicate-code`      | [docs/gates/duplicate-code.md](docs/gates/duplicate-code.md)                                                                                                                                                                                           |
+| `test-suite`          | [docs/gates/test-suite.md](docs/gates/test-suite.md)                                                                                                                                                                                                   |
 
 Beside the gates CI runs are the modules a consuming repo **imports**. A gate
 refuses a tree from the outside; an export is code the repo calls, and it is the
@@ -60,22 +60,66 @@ shape a rule takes when what it grades is only visible from inside the repo — 
 app's own route table, its own limiter, its own browser. Each is reachable
 through `files` and `exports`, and each has a page of its own:
 
-| Export                                                         | Imported by                    | What it holds                                                                                                         |
-| -------------------------------------------------------------- | ------------------------------ | --------------------------------------------------------------------------------------------------------------------- |
-| [`route-log`](docs/exports/route-log.md)                       | the app, for the capacity ramp | the protocol between an app and the two floors over its route table                                                   |
-| [`invariant-sweep`](docs/exports/invariant-sweep.md)           | the Playwright specs           | no console error, thrown error, overflow or unprompted shift on its pages                                             |
-| [`count-budget`](docs/exports/count-budget.md)                 | the Playwright specs of a job  | a job's commits, DOM mutations, requests and bytes per phase, held exactly to ceilings the write command never raises |
-| [`limiter-conformance`](docs/exports/limiter-conformance.md)   | the rate limiter's own suite   | STACK's rate-limit rule, executable                                                                                   |
-| [`property`](docs/exports/property.md)                         | every property test            | `fc.assert` with the run's budget applied, so a nightly searches further                                              |
-| [`interleaving`](docs/exports/interleaving.md)                 | a property over Effect fibers  | the order overlapping fibers run in, generated and replayable from a seed                                             |
-| [`response-schema`](docs/exports/response-schema.md)           | the API's own suite            | every Elysia route declares a `response` schema, or is a named skip                                                   |
-| [`characterization-net`](docs/exports/characterization-net.md) | a golden suite and its updater | the harness rules that keep a large golden net honest                                                                 |
+| Export                                                            | Imported by                             | What it holds                                                                                                                                            |
+| ----------------------------------------------------------------- | --------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| [`route-log`](docs/exports/route-log.md)                          | the app, for the database job           | the protocol between an app and the two gates over its route table                                                                                       |
+| [`request-timing`](docs/exports/request-timing.md)                | the app, at its entry and its waits     | per operation, one record of where its time went; `/conformance` and `/conformance/effect` are the app's checks, and `request-timing-report` reads a log |
+| [`request-timing/elysia`](docs/exports/request-timing.md)         | the app's entry                         | one operation per request an Elysia app serves, named by the route it matched                                                                            |
+| [`request-timing/mysql2`](docs/exports/request-timing.md)         | the app's database client               | each wait of a mysql2 pool, its connections and statements, as a `db` wait                                                                               |
+| [`request-timing/bun-redis`](docs/exports/request-timing.md)      | the app's store client                  | each command Bun's Redis client sends, as a `store` wait                                                                                                 |
+| [`request-timing/fetch`](docs/exports/request-timing.md)          | the app's outbound calls                | each `fetch` call until its headers arrive, as an `out` wait                                                                                             |
+| [`request-timing/tanstack-start`](docs/exports/request-timing.md) | the app's entry                         | one operation per request a TanStack Start app serves, named by the route it matched or the server function it called                                    |
+| [`request-timing/bun-sql`](docs/exports/request-timing.md)        | the app's database client               | each query, transaction and checkout of a Bun.sql client, as a `db` wait                                                                                 |
+| [`request-timing/next`](docs/exports/request-timing.md)           | a Next.js app's `route.ts` files        | one operation per request a route handler serves, named by the pattern its file's place gives it                                                         |
+| [`request-timing/trpc`](docs/exports/request-timing.md)           | the app's base procedure and tRPC route | one operation per procedure call over HTTP, named by its path, alone or in a batch                                                                       |
+| [`invariant-sweep`](docs/exports/invariant-sweep.md)              | the Playwright specs                    | no console error, thrown error, overflow or unprompted shift on its pages                                                                                |
+| [`count-budget`](docs/exports/count-budget.md)                    | the Playwright specs of a job           | a job's commits, DOM mutations, requests and bytes per phase, held exactly to ceilings the write command never raises                                    |
+| [`limiter-conformance`](docs/exports/limiter-conformance.md)      | the rate limiter's own suite            | STACK's rate-limit rule, executable                                                                                                                      |
+| [`property`](docs/exports/property.md)                            | every property test                     | `fc.assert` with the run's budget applied, so a nightly searches further                                                                                 |
+| [`interleaving`](docs/exports/interleaving.md)                    | a property over Effect 4 fibers         | the order overlapping fibers run in, generated and replayable from a seed                                                                                |
+| [`response-schema`](docs/exports/response-schema.md)              | the API's own suite                     | every Elysia route declares a `response` schema, or is a named skip                                                                                      |
+| [`characterization-net`](docs/exports/characterization-net.md)    | a golden suite and its updater          | the harness rules that keep a large golden net honest                                                                                                    |
+| [`narrowing`](docs/exports/narrowing.md)                          | any suite or spec                       | `only`, `nth`, `must` and `rejectionOf`: a value the compiler could not prove present, or a throw naming what was found                                  |
+| [`bun-test`](docs/exports/bun-test.md)                            | `compilerOptions.types`                 | `.resolves` and `.rejects` chains typed as promises, so an await of one passes `await-thenable` and a missing one is reported                            |
+| [`css-custom-properties`](docs/exports/css-custom-properties.md)  | `compilerOptions.types`                 | any `--name` as a key of React's `CSSProperties`, so a runtime value reaches `style` without a cast                                                      |
 
 No specifier carries an extension, and what one resolves to is this package's
-business: the first three are **built** — `bun run build` writes them to `dist/`,
-which is committed and held equal to a fresh build by `tests/dist.test.ts` — and
-the other five ship their source. `tsdown.config.ts` has why those three and no
-others. Either way the `.ts` files stay the sources.
+business: `route-log`, `request-timing`, `request-timing/conformance/effect`,
+`request-timing/elysia`, `request-timing/mysql2`, `request-timing/bun-redis`,
+`request-timing/fetch`, `request-timing/tanstack-start`, `request-timing/bun-sql`,
+`request-timing/next`, `request-timing/trpc`,
+`invariant-sweep`, `count-budget` and `narrowing` are **built** — `bun run
+build` writes them to `dist/`, which is committed and held equal to a
+fresh build by `tests/dist.test.ts` — and the others ship their source.
+`tsdown.config.ts` has why those and no others. Either way the `.ts` files
+stay the sources.
+
+The last two are type declarations, which a repo names in its own
+`tsconfig.json` rather than imports. They go in `types`, since an entry there is
+loaded whatever the repo's `include` says, while an `include` entry into
+`node_modules` is dropped by `exclude: ["node_modules"]`. Setting `types` at all
+stops TypeScript loading every `@types` package by default, so the list names
+each one the repo uses:
+
+```jsonc
+"types": ["bun", "@gokayo43/dev-config/bun-test", "@gokayo43/dev-config/css-custom-properties"]
+```
+
+and `narrowing` is one import:
+
+```ts
+import { must, nth, only, rejectionOf } from "@gokayo43/dev-config/narrowing";
+```
+
+Three root modules are **commands** a repo runs rather than imports: installing
+this package puts each in `node_modules/.bin`, so `bun run <command>` reaches it
+with no script of the repo's own.
+
+| Command                 | What it answers                                                                         | Page                                                               |
+| ----------------------- | --------------------------------------------------------------------------------------- | ------------------------------------------------------------------ |
+| `capacity-ramp`         | how many simultaneous users an address holds, and which path slowed first when it broke | [docs/commands/capacity-ramp.md](docs/commands/capacity-ramp.md)   |
+| `dev-server`            | one supervised dev server per worktree                                                  | [One dev server per worktree](#one-dev-server-per-worktree), below |
+| `request-timing-report` | per operation, where a log's requests spent their time                                  | [docs/exports/request-timing.md](docs/exports/request-timing.md)   |
 
 Gate code is deliberately **not** importable by the repos it gates — a gate in
 `node_modules` runs only if the repo's workflow remembers to, and it moves
@@ -93,6 +137,13 @@ installs no `typescript` to type-check, and the repo contract holds the script
 and a `packageManager` of `bun@1.4.4` or later. A repo adds `typescript` only
 for a tool that calls its API; this one does, because tsdown's declaration pass
 builds the `.d.ts` files in `dist/` with it.
+
+A repo whose types are partly generated runs the generator inside `typecheck`,
+ahead of the checker, because `bun check` checks only the files on disk. For
+Next.js that is `next typegen && bun check --no-script`, since Next writes the
+route types its pages are checked against only when it generates them. The
+contract reads the script as commands joined by `&&`, so the generator ahead of
+the checker passes.
 
 `tsconfig.base.json` resolves through Node module resolution, so it is referenced
 by package name:
@@ -119,13 +170,33 @@ turns on:
 
 - `strict`, `noUncheckedIndexedAccess`, `exactOptionalPropertyTypes`
 - `noImplicitOverride`, `noImplicitReturns`, `noFallthroughCasesInSwitch`
-- `noPropertyAccessFromIndexSignature` — index-signature reads use `obj["key"]`,
-  so a typo in a dotted read stays a type error instead of silently widening
 - `noUncheckedSideEffectImports` — a bare `import "./thing"` must resolve
 - `allowUnreachableCode: false`, `allowUnusedLabels: false`
 - `verbatimModuleSyntax`, `isolatedModules`, `erasableSyntaxOnly` — enums,
-  parameter properties and namespaces are errors, because Bun and Vite strip
-  types rather than compile them
+  parameter properties and namespaces are errors. Bun runs them, but Node's type
+  stripping refuses them, so a `.ts` file that plain `node` loads fails at run
+  time on any of the three (probed, Bun 1.4.4 and Node 24.22)
+
+`exactOptionalPropertyTypes` makes `field?: T` mean the key is absent or holds a
+`T`, never `undefined`. A repo's own type is widened to `field?: T | undefined`
+only where no reader can tell an absent key from one holding `undefined`. The
+readers that can are `in`, `Object.keys` and `Object.entries`, a spread (which
+overwrites a default with `undefined`), an exact schema that refuses a key
+holding `undefined`, and a serialiser that keeps `undefined`. An option bag a repo does not own keeps its
+type, and the repo includes the field with a conditional spread.
+
+`noPropertyAccessFromIndexSignature` is deliberately absent. It catches a typo
+in a dotted read of a type that has declared keys beside an index signature, and
+in the repo measured for it, it caught none among its findings. The environment
+is the one such type that matters, and two things cover it:
+`anti-slop/no-env-access` keeps every read of it in one decoded module, and
+Vite's `strictImportMetaEnv` takes the index signature off `import.meta.env`.
+
+A repo that sets one of the base's checks back in any `tsconfig*.json` it keeps,
+such as `strict: false`, `allowUnreachableCode: true` or
+`noUncheckedIndexedAccess: null`, writes the reason in a comment directly above
+the entry. The repo contract refuses it otherwise, as it refuses an unexplained
+lint switch-off.
 
 `noUnusedLocals` and `noUnusedParameters` are deliberately absent: unused code is
 the linter's report to make, and having both tools flag it means every dead
@@ -192,12 +263,25 @@ The rules the base switches off: `no-await-in-loop` (a sequential loop is
 usually the correct one here, and the fan-out it asks for is a design call about
 shared state the rule cannot see), `react/react-in-jsx-scope` (the automatic JSX
 runtime imports nothing), `oxc/no-map-spread` (its advice is to mutate in place,
-wrong for the copy-on-write style these codebases are written in), and
+wrong for the copy-on-write style these codebases are written in),
 `typescript/no-unsafe-type-assertion` (a subset of the rule below it, which is
-why it is stated only where that one is off). Then, in an override:
-`unicorn/consistent-function-scoping` and
-`typescript/consistent-type-assertions` in a suite, and
-`anti-slop/no-unnamed-effects` under `hooks/`. The reason in full sits beside
+why it is stated only where that one is off), `anti-slop/no-chained-type-assertions`
+(every chain it reports in source already draws `consistent-type-assertions`
+twice, so it is stated only in a suite), `eslint/no-underscore-dangle` (its
+fix contradicts `no-unused-vars` on `using _page = …`),
+`typescript/consistent-return` (`noImplicitReturns` already refuses a path that
+falls off, and this rule refuses the exhaustive switch and Effect's
+`return yield* Effect.fail(…)`), `import/no-named-as-default-member` (the type
+checker answers what a default object holds), and
+`react/jsx-no-constructed-context-values` and
+`react/no-object-type-as-default-prop` (both ask for the `useMemo` the memo ban
+refuses, for an identity the React Compiler already gives). Then, in an override:
+`unicorn/consistent-function-scoping` in a test file; `anti-slop/no-env-access`
+in `env.ts`; `anti-slop/no-env-access`, `typescript/consistent-type-assertions`,
+`anti-slop/no-test-support-imports`, `typescript/no-unnecessary-type-arguments`,
+every React Compiler judgement and `anti-slop/no-unnamed-effects` in a suite;
+`react/rules-of-hooks` in a Playwright file; and `anti-slop/no-unnamed-effects`
+and `anti-slop/no-raw-query-hooks` under `hooks/`. The reason in full sits beside
 each entry, which is where the repo contract requires it — see
 [the repo contract](docs/gates/repo-contract.md). No count is given here on
 purpose: a number in prose is one nobody updates, and the list is the answer.
@@ -227,18 +311,18 @@ each one converts a question into silence:
 - `eslint/no-warning-comments` — `TODO`, `FIXME`, `XXX` and `HACK` anywhere in a
   comment. The register is GitHub issues in the repo the work belongs to; a
   marker in a file is invisible to anyone who is not already reading that file.
-- `typescript/no-restricted-types` — `Record<string, unknown>` and
-  `Record<string, any>`. The bag with no keys is how a shape nobody modelled
-  travels: it type-checks everywhere and asserts nothing. It is legal exactly
-  once per boundary, as a **named alias at the module that owns that boundary**,
-  carrying one disable with the why — `type ConfigObject = Record<string,
-unknown>` in `_lib/gate.ts` here, for config files this repo reads and does
-  not own. Everything else is one of: model the shape, parse the input, or
-  delete the cast. A fleet-wide escape alias re-exported everywhere is the one
-  thing this must not become; the linter cannot see the difference, so review
-  does. Inline `{ [k: string]: unknown }` is not matched — the rule reads type
-  references, not shapes — but `anti-slop/no-unsafe-dictionary-type` below is,
-  and catches it along with aliases and mapped types.
+- `anti-slop/no-unsafe-dictionary-type` — `Record<string, unknown>`,
+  `Record<string, any>`, the inline `{ [k: string]: unknown }` and the aliases
+  and mapped types that spell the same thing. The bag with no keys is how a
+  shape nobody modelled travels: it type-checks everywhere and asserts nothing.
+  It is legal exactly once per boundary, as a **named alias at the module that
+  owns that boundary**, carrying one disable with the why: `type ConfigObject =
+  Record<string, unknown>` in `_lib/gate.ts` here, for config files this repo
+  reads and does not own. Everything else is one of: model the shape, parse the
+  input, or delete the cast. A fleet-wide escape alias re-exported everywhere is
+  the one thing this must not become; the linter cannot see the difference, so
+  review does. The rule is [the plugin's](#the-anti-slop-plugin), and it is the
+  only one the base states for these types.
 - `typescript/consistent-type-assertions`, at `assertionStyle: "never"` — an
   assertion tells the compiler to stop checking at the one place the answer was
   still available. An annotation makes the same claim and is checked, and
@@ -251,9 +335,13 @@ unknown>` in `_lib/gate.ts` here, for config files this repo reads and does
   one is on it is a second name on every disable and a reader of one cannot tell
   which fact it is about. It is therefore off at the top level and `error` in the
   suite override, where it is the whole of what still holds.
-- `no-restricted-globals` — `__dirname`, `__filename` and `require`. Every repo
-  here is ESM, where none of the three exists; the entries name the replacement
-  (`import.meta.dir`, `import.meta.url`, `import`) so the diagnostic is the fix.
+- `no-restricted-globals` — `__dirname`, `__filename` and `require`. All three
+  are CommonJS's names. Bun supplies them to an ES module as well, and Node does
+  not, so a file naming one breaks wherever Node loads it: a Playwright spec, a
+  config a Node tool reads, a file this package ships. The entries name the
+  replacement (`import.meta.dir` and `import.meta.path`, or `import.meta.dirname`
+  and `import.meta.filename` in a file Node also runs, and `import`) so the
+  diagnostic is the fix.
 - `eqeqeq`, at `always` with `{ "null": "ignore" }` — `==` coerces instead of
   deciding, and the coercion table is the thing nobody has in their head. It sits
   in `pedantic`, which this base does not take, so it is stated. `null` is the
@@ -344,6 +432,22 @@ the table's suite as a fixture so that the day upstream turns it into a real
 diagnostic, the change is visible here rather than surprising in a consuming
 repo.
 
+Every judgement in the table is off in a suite (the test suffixes, the two
+test-support names, `tests/` and `e2e/`). The judgements are about what the
+compiler may cache or reorder, and `bun test` runs no Babel, so a component a
+case renders is never compiled. `react/rules-of-hooks` and `react/exhaustive-deps`
+stay on there, since a test component still runs under React. In a Playwright
+file (`e2e/` and the `*.spec.ts(x)` suffix) `react/rules-of-hooks` is off as
+well: Playwright hands every fixture a callback named `use`, which the rule reads
+as React's `use`, and no React runs in such a file.
+
+Two of the React plugin's own rules are off everywhere for the compiler's sake:
+`react/jsx-no-constructed-context-values` and
+`react/no-object-type-as-default-prop`. Both ask for a stable identity through
+`useMemo`, which the memo ban refuses, and the compiler gives a context value and
+a default prop that identity itself. In a component the compiler skipped, the
+answer is to end the skip, which `react/todo` reports.
+
 #### The bail-outs
 
 `react/todo` is the last row and the misleading name — it has nothing to do with
@@ -362,12 +466,12 @@ React, all 22 bail-outs are two shapes: a `try`/`finally` in a component, and an
 `await import(...)` inside one. A generator body and a logical assignment bail
 out too and occur nowhere in the fleet.
 
-Every row above is driven against a fixture in `tests/lint-policy.test.ts`,
-`incompatible-library`, `rule-suppression` and `syntax` excepted — none of the
-shapes tried here provoked those three, so each carries the row a reader who hits
-it needs and no case claiming a check nothing drives. The suite holds the two
-halves the table cannot: that the set of rules it drives plus those three is
-exactly the set the base enables, and that each of them still reports — a rule
+Every row above is driven against a fixture in `tests/lint-policy-react.test.ts`,
+`incompatible-library` and `syntax` excepted. None of the shapes tried here
+provoked those two, so each carries the row a reader who hits it needs and no
+case claiming a check nothing drives. The suite holds the two halves the table
+cannot: that the rules it drives plus those two are exactly the judgements the
+base enables, and that each driven one still reports — a rule
 that stays a name and goes quiet fails there rather than passing as a config
 switched on and answering for nothing.
 
@@ -378,14 +482,14 @@ this is where they stop being a thing to remember. Each diagnostic names **what
 the import lost to**, because it is the only place the loser of that decision is
 standing:
 
-| Import                                                 | From                    | Where                 | Instead                                                             | Carrier                        |
-| ------------------------------------------------------ | ----------------------- | --------------------- | ------------------------------------------------------------------- | ------------------------------ |
-| `useMemo`, `useCallback`                               | `react`                 | everywhere            | the React Compiler inserts the memo; delete the wrapper             | `no-restricted-imports`        |
-| `beforeEach`, `afterEach`                              | `bun:test`              | everywhere            | a call the case makes itself, and `await using`                     | `no-restricted-imports`        |
-| `test`                                                 | `@playwright/test`      | everywhere            | the invariant sweep's `test`, which sweeps each page in its context | `no-restricted-imports`        |
-| `assert`, the default export                           | `fast-check`            | everywhere            | the property budget's `check`, which the run can turn up            | `no-restricted-imports`        |
-| `useEffect`, `useLayoutEffect`, `useSyncExternalStore` | `react`                 | outside `**/hooks/**` | a named hook whose name says what it subscribes to                  | `anti-slop/no-unnamed-effects` |
-| `useQuery`, `useInfiniteQuery`                         | `@tanstack/react-query` | under `**/routes/**`  | the loader's `ensureQueryData` and `useSuspenseQuery`               | `anti-slop/no-raw-query-hooks` |
+| Import                                                 | From                    | Where                 | Instead                                                             | Carrier                           |
+| ------------------------------------------------------ | ----------------------- | --------------------- | ------------------------------------------------------------------- | --------------------------------- |
+| `useMemo`, `useCallback`                               | `react`                 | everywhere            | the React Compiler inserts the memo; delete the wrapper             | `anti-slop/no-manual-memoization` |
+| `beforeEach`, `afterEach`                              | `bun:test`              | everywhere            | a call the case makes itself, and `await using`                     | `no-restricted-imports`           |
+| `test`                                                 | `@playwright/test`      | everywhere            | the invariant sweep's `test`, which sweeps each page in its context | `no-restricted-imports`           |
+| `assert`, the default export                           | `fast-check`            | everywhere            | the property budget's `check`, which the run can turn up            | `no-restricted-imports`           |
+| `useEffect`, `useLayoutEffect`, `useSyncExternalStore` | `react`                 | outside `**/hooks/**` | a named hook whose name says what it subscribes to                  | `anti-slop/no-unnamed-effects`    |
+| `useQuery`, `useInfiniteQuery`                         | `@tanstack/react-query` | under `**/routes/**`  | the loader's `ensureQueryData` and `useSuspenseQuery`               | `anti-slop/no-raw-query-hooks`    |
 
 The suspense pair, `beforeAll`/`afterAll`, Playwright's `expect` and
 `defineConfig`, fast-check's generators, and every other React hook are
@@ -396,9 +500,15 @@ untouched: what is banned is the name, not the module.
 decides cannot be: an override REPLACES a list-shaped rule rather than adding to
 it, so scoping one that way would take away every entry it did not restate — a
 consuming repo's [own lock](#locking-a-settled-decision) among them, wherever the
-block reached. A plugin rule's scalar `"off"` replaces only itself, so the two
-positional bans are rules of the plugin and no block in the base redefines a
+block reached. A plugin rule's scalar `"off"` replaces only itself, so every
+positional ban is a rule of the plugin and no block in the base redefines a
 list-shaped rule at all. `tests/oxlint-base.test.ts` holds it to both halves.
+
+The memo pair holds in every file and is a plugin rule anyway. As a
+`no-restricted-imports` entry it refused `import * as React from "react"`
+before anything was read off it, which is how shadcn's components import React,
+and it refused a type-only import of either name. The plugin rule refuses
+`React.useMemo` and lets the bare namespace import through.
 
 The two carriers differ in what they can see, and both differences are graded in
 `tests/lint-policy.test.ts`:
@@ -406,21 +516,23 @@ The two carriers differ in what they can see, and both differences are graded in
 - The plugin rules follow the name past every spelling that reaches it without
   importing it — renamed, off a namespace, destructured off one, through
   `await import`, and re-exported from a barrel (`export { useEffect } from
-"react"` is refused at the barrel, which is the end that can still tell). They
+  "react"` is refused at the barrel, which is the end that can still tell). They
   also leave a **type-only** import alone: `import type { useEffect }` borrows
   the signature without reaching the value.
 - `no-restricted-imports` refuses a namespace import and a renamed one, a
   default import where the list names `default`, and a re-export through a
   barrel. It refuses a type-only import as well, which it gives no way to
-  allow: none of `useMemo`, `beforeEach`, Playwright's `test` and
-  fast-check's `assert` has a use as a type, so that costs nothing here — and
+  allow: none of `beforeEach`, Playwright's `test` and fast-check's `assert`
+  has a use as a type, so that costs nothing here — and
   the day a name on that list does, it is the carrier that has to change. What
   it does not see is a dynamic `await import`, which the plugin rules do.
 
-The grant is the directory, which is the limit both scoped rules carry: inside
+The grant is the directory, which is the limit the effect and query bans carry: inside
 `hooks/` every spelling of the effect trio is allowed, a barrel re-exporting it
 included, exactly as `env.ts` may re-export what `no-env-access` refuses
-everywhere else.
+everywhere else. A suite is the effect trio's second grant: a component a case
+renders is the fixture's, and a named hook under `hooks/` written for it would be
+production code that one test uses.
 
 ### Overrides
 
@@ -430,24 +542,49 @@ Some facts are true of a file because of where it sits, not what it contains:
 {
   "overrides": [
     {
-      "files": ["**/*.test.ts", "**/*.test.tsx", "**/*.spec.ts", "**/*.spec.tsx"],
+      "files": [
+        "**/*.test.ts",
+        "**/*.test.tsx",
+        "**/*.spec.ts",
+        "**/*.spec.tsx",
+        "**/*.test-harness.*",
+        "**/*.fixture.*"
+      ],
       "rules": {
         "unicorn/consistent-function-scoping": "off",
         "anti-slop/no-call-log-assertions": "error",
         "anti-slop/no-local-module-mocks": "error",
         "anti-slop/no-mock-assertions": "error",
-        "anti-slop/no-real-timers": "error"
+        "anti-slop/no-real-timers": "error",
+        "anti-slop/no-unfailable-assertions": "error"
       }
     },
-    { "files": ["src/server/**", "server/**", "apps/api/**"], "rules": { "no-console": "error" } },
     { "files": ["**/env.ts"], "rules": { "anti-slop/no-env-access": "off" } },
     {
-      "files": ["**/*.test.ts", "**/*.spec.ts", "**/tests/**", "**/e2e/**"],
+      "files": [
+        "**/*.test.ts",
+        "**/*.test.tsx",
+        "**/*.spec.ts",
+        "**/*.spec.tsx",
+        "**/*.test-harness.*",
+        "**/*.fixture.*",
+        "**/tests/**",
+        "**/e2e/**"
+      ],
       "rules": {
         "anti-slop/no-env-access": "off",
         "typescript/consistent-type-assertions": "off",
-        "typescript/no-unsafe-type-assertion": "error"
+        "typescript/no-unsafe-type-assertion": "error",
+        "anti-slop/no-chained-type-assertions": "error",
+        "anti-slop/no-test-support-imports": "off",
+        "typescript/no-unnecessary-type-arguments": "off",
+        "react/purity": "off",
+        "anti-slop/no-unnamed-effects": "off"
       }
+    },
+    {
+      "files": ["**/e2e/**", "**/*.spec.ts", "**/*.spec.tsx"],
+      "rules": { "react/rules-of-hooks": "off" }
     },
     { "files": ["**/routes/**"], "rules": { "anti-slop/no-raw-query-hooks": "error" } },
     {
@@ -461,17 +598,35 @@ Some facts are true of a file because of where it sits, not what it contains:
 }
 ```
 
-A test file is where the four scoped rules of [the plugin](#the-anti-slop-plugin)
+A test file is where the plugin's [test-smell rules](#the-anti-slop-plugin)
 apply, and where a helper one `describe` uses belongs inside it rather than
-hoisted to module scope. Server code writes through the structured logger, so
-`no-console` rises from `warn` to `error` on the server globs — a one-shot CLI
-under those paths carries a file-level disable with its reason, which is the shape
-the directive rule below already requires. And `env.ts` is [the one module that
+hoisted to module scope. A test-support file, `*.test-harness.*` or
+`*.fixture.*`, is in both test blocks wherever it lives, so a harness or a
+fixture is graded as the test code it is, and
+`anti-slop/no-test-support-imports` refuses an import of one from any file
+outside the suite block: production, and a story or a seed script too. A repo
+that wants one of those to import a fixture switches the rule off for that glob
+in its own config, with its reason. And `env.ts` is [the one module that
 reads the environment](#the-environment-is-read-in-one-module), while a suite is
 where a variable is set for a spawned process rather than read for its value, and
 where a case asserts about a value nothing typed — which is why that block names
 **directories** as well as suffixes: a suite's helpers are that same code one
-file over, under no suffix at all.
+file over, under no suffix at all. The same block switches off
+`typescript/no-unnecessary-type-arguments`, because bun:test ties `toBe` and
+`toEqual` to the type `expect` inferred, so `expect<unknown>(actual)` is how a
+case compares against a wider value; every React Compiler judgement, of which the
+example shows `react/purity` and the base lists all 22 (see [the
+compiler's section](#what-the-react-compiler-declines-to-optimize)); and
+`anti-slop/no-unnamed-effects`. It is also the one place
+`anti-slop/no-chained-type-assertions` is on, since everywhere else
+`consistent-type-assertions` already refuses each link of a chain. The
+Playwright block after it switches off `react/rules-of-hooks`, for the fixture
+callback named `use`.
+
+`no-console` is `error` in every file, stated once at the top level. Server code
+writes through the structured logger, and a one-shot CLI carries a file-level
+disable with its reason, which is the shape the directive rule below already
+requires.
 
 The last two blocks are the [import bans](#the-imports-a-pick-has-already-answered)
 that depend on where a file sits, each a scalar on a rule of its own. `hooks/`
@@ -523,9 +678,10 @@ nobody in the consuming repo asked.
 One thing to know before writing one: a rule's configuration is **replaced across
 `extends`**, not merged, so a repo stating `no-restricted-imports` or
 `no-restricted-globals` of its own drops every entry the base states for it — the
-memoisation and `bun:test` bans, and the three ESM globals, become unenforced in
-that repo, silently. (The two positional bans are unaffected: they are rules of
-their own, and a repo redefining a list-shaped rule cannot reach them.) Restate
+`bun:test`, Playwright and fast-check bans, and the three ESM globals, become
+unenforced in that repo, silently. (The memo ban and the positional bans are
+unaffected: they are rules of their own, and a repo redefining a list-shaped
+rule cannot reach them.) Restate
 the entries beside your own until
 [dev-config#86](https://github.com/gokayo43/dev-config/issues/86) makes that a
 gate rather than a thing to remember. What the base does carry is the other kind —
@@ -562,6 +718,29 @@ Denied: `typescript/no-floating-promises`, `typescript/no-misused-promises`,
 which is a bug wherever either is a legal value, and `??` is what the code
 almost always meant. Nothing here is warned.
 
+Two of the rules that arrive through a tier carry an option:
+
+- `typescript/no-floating-promises` allows bun:test's `mock.module`, by its
+  declaration in `bun:test` (`allowForKnownSafeCalls`), under any local name.
+  bun:test types the call `void | Promise<void>`, so every module mock otherwise
+  reads as a floating promise. A local `mock` with a `module` method, and every
+  other call, are still held. The one hazard this lets through: a mock with an
+  async factory left unawaited races the import it replaces, so a case mocking
+  with one awaits the call.
+- `typescript/no-misused-spread` allows spreading a string. `[...code]` splits by
+  code point, which is what a barcode or a limit counted in code points wants;
+  the rule's case, text a person reads where a code point can be half a
+  character, is one no rule can tell from the rest. A spread of a class instance
+  or a map, which loses data outright, is still refused.
+
+`import/no-unassigned-import` allows `**/*.css`, since a stylesheet is imported
+for what loading it does. And `typescript/consistent-return` is off, because
+`noImplicitReturns` in the shared tsconfig refuses every path that falls off a
+function owing a value and reads exhaustiveness from the types, where the rule
+reads syntax and refuses the exhaustive switch `switch-exhaustiveness-check` asks
+for. In a suite `typescript/no-unnecessary-type-arguments` is off as well (see
+[the overrides](#overrides)).
+
 `no-unnecessary-condition` fires on any check TypeScript already proved
 redundant, which includes real validation at a trust boundary — a parsed JSON
 body, a `process.env` read, a value crossing the FFI edge — where the declared
@@ -594,41 +773,84 @@ function that hands `unknown` back, and a `Record<string, unknown>` value
 contract all pass a fully type-aware run — and assertion laundering is precisely
 the move an agent makes to silence the rules above. These rules close that,
 shipped in this package as an oxlint JS plugin and enabled at `error` by the
-base:
+base, everywhere but the first, which is on in the suite scope alone:
 
-| Rule                         | What it rejects                                                        |
-| ---------------------------- | ---------------------------------------------------------------------- |
-| `no-chained-type-assertions` | `x as object as User` — nested assertions that fabricate evidence      |
-| `no-known-value-widening`    | a broad annotation over a known initializer; use `satisfies`           |
-| `no-unsafe-dictionary-type`  | dictionary contracts whose value type is `unknown`/`any`/`object`/`{}` |
-| `no-unknown-type-aliases`    | an alias that only renames `unknown`                                   |
-| `no-object-parameters`       | the broad `object` type on an input                                    |
-| `no-unknown-parameters`      | an `unknown` parameter, except the `cause` convention                  |
-| `no-unknown-returns`         | a declared return of `unknown` or `Promise<unknown>`                   |
-| `no-reflect-apply`           | `Reflect.apply`, which launders past a typed call                      |
-| `no-reflect-get`             | `Reflect.get`, which answers `any` for a property read                 |
+| Rule                         | What it rejects                                                                   |
+| ---------------------------- | --------------------------------------------------------------------------------- |
+| `no-chained-type-assertions` | `x as object as User` — nested assertions that fabricate evidence                 |
+| `no-known-value-widening`    | a broad annotation over a known initializer; use `satisfies`                      |
+| `no-unsafe-dictionary-type`  | dictionary contracts whose value type is `unknown`/`any`/`object`/`{}`            |
+| `no-unknown-type-aliases`    | an alias that only renames `unknown`                                              |
+| `no-object-parameters`       | the broad `object` type on an input                                               |
+| `no-unknown-parameters`      | an `unknown` parameter, except the `cause` convention and a rejection reason      |
+| `no-unknown-returns`         | a declared return of `unknown` or `Promise<unknown>`, except a callback's promise |
+| `no-reflect-apply`           | `Reflect.apply`, which launders past a typed call                                 |
+| `no-reflect-get`             | `Reflect.get`, which answers `any` for a property read                            |
+
+Three exemptions keep these rules off code that is already correct, each in the
+narrowest form that covers it:
+
+- `no-unknown-parameters` leaves the first parameter of a rejection handler
+  written in place: a function passed directly as `.catch`'s first argument or
+  `.then`'s second. TypeScript types a rejection reason `any`, so `unknown` is
+  the safe spelling there. A handler held in a variable and passed by name, a
+  further parameter of the handler, and a type guard still report: a guard is
+  an unchecked claim, and the stack's answer is a schema's own guard.
+- `no-unknown-returns` leaves a function type (`() => Promise<unknown>`, or
+  `PromiseLike`) whose return is a promise of `unknown`: that is the widest
+  honest type of an async callback whose result the receiver ignores, since
+  TypeScript will not take `() => Promise<Order>` where `() => Promise<void>` is
+  asked for. A function type returning plain `unknown` still reports, because
+  `() => void` is its honest spelling, and so does a method signature, which is
+  how a port declares what it hands back.
+- `no-known-value-widening` leaves a record over a fixed set of keys
+  (`Record<"a" | "b", V>`, the same through an alias, or a mapped type over one),
+  whose annotation checks exactly what `satisfies` would. It also leaves a
+  dictionary binding looked up somewhere in the file by a key only the run time
+  knows (`labels[code]`): `satisfies` keeps only the keys written, so that
+  lookup stops compiling (TS7053). A key the file imports rather than declares
+  is not known to be fixed and still reports, as does a table indexed only in
+  another module.
 
 Where a ported rule overlapped oxlint's own `typescript/no-unsafe-type-assertion`
 both were run over the same fixtures and only the stronger one kept.
 
-Two more rules are this repo's own, and answer a different question again — not
-what a type says, but which import a settled pick already answered:
+These are this repo's own, and answer a different question again — not what a
+type says, but which import is already answered:
 
-| Rule                 | What it rejects                                                            |
-| -------------------- | -------------------------------------------------------------------------- |
-| `no-unnamed-effects` | React's effect trio outside `hooks/`, where the hook's name states the job |
-| `no-raw-query-hooks` | `useQuery`/`useInfiniteQuery` in a route, whose data the loader owns       |
+| Rule                      | What it rejects                                                              |
+| ------------------------- | ---------------------------------------------------------------------------- |
+| `no-manual-memoization`   | `useMemo`/`useCallback`, whose memo the React Compiler inserts               |
+| `no-unnamed-effects`      | React's effect trio outside `hooks/`, where the hook's name states the job   |
+| `no-raw-query-hooks`      | `useQuery`/`useInfiniteQuery` in a route, whose data the loader owns         |
+| `no-test-support-imports` | an import of a `*.test-harness.*` or `*.fixture.*` file from outside a suite |
 
-They are rules rather than `no-restricted-imports` entries because their answer
-depends on where the file sits — see [the two
-carriers](#the-imports-a-pick-has-already-answered) for why that decides it — and
+The first three are rules rather than `no-restricted-imports` entries for the
+reasons [the two carriers](#the-imports-a-pick-has-already-answered) gives, and
 each follows its names through every spelling that reaches the value without
 importing it, a re-exporting barrel included, while leaving a type-only import
-alone.
+alone. `no-test-support-imports` reads the specifier instead: its last path
+segment carrying `.test-harness` or `.fixture` as a dot-separated part
+(`./order.fixture`, `./order.fixture.ts`, `@/tests/page.test-harness`), in an
+import, a re-export, a dynamic import or an import type, type-only ones
+included. A line that re-exports a module whole (`export * from "react"`,
+`export { default as React } from "react"`) draws a message of its own from the
+first three, since it holds no use of a refused name to change: re-export by
+name only what the barrel needs.
 
-`no-chained-type-assertions` is the one that overlaps and stays. The native
-rule covers every chain that fabricates a type, because such a chain has a
-narrowing link in it for the checker to refuse. A chain whose every link widens
+`no-test-support-imports` reads one file and no config, so it cannot tell a
+path alias from a package: a package's own file named like a fixture
+(`some-pkg/lib/x.fixture.js`) is refused too. Missing an alias would be the
+worse error, so the rule keeps that limit, and a line that does import such a
+package file carries a disable naming the rule and its reason.
+
+`no-chained-type-assertions` is the one that overlaps and stays, in the suite
+scope alone: in source `consistent-type-assertions` refuses every link of every
+chain, so this rule would only repeat it. In a suite the native rule that is
+left, `no-unsafe-type-assertion`, covers every chain that fabricates a type,
+because such a chain has a narrowing link in it for the checker to refuse, and
+such a chain draws both rules, since telling it apart from the next shape needs
+type information the plugin does not have. A chain whose every link widens
 has none: `admin as User as object` draws nothing from the native rule, nothing
 from `no-unnecessary-type-assertion`, and nothing else in the base says the type
 it started from was discarded. Widening a binding and asserting it back needs no
@@ -636,18 +858,21 @@ rule of its own — that is an assertion to a narrower type by construction, whi
 is the whole of what the native rule reads, and `oxlint-base.test.ts` grades the
 base on those shapes directly.
 
-Four more are enabled only over `*.test.ts`, `*.test.tsx`, `*.spec.ts` and
-`*.spec.tsx`, because every one of them is ordinary code anywhere else: a source
+The test-smell rules below are enabled only over test files (`*.test.ts`,
+`*.test.tsx`, `*.spec.ts`, `*.spec.tsx`, and the support files
+`*.test-harness.*` and `*.fixture.*`), because every one of them is ordinary
+code anywhere else: a source
 file counts calls, sleeps, reaches into a module of its own and hands a function
 to `expect` in a helper, and none of that is a smell until it is a test's whole
 evidence.
 
-| Rule                     | What it rejects                                                                                      |
-| ------------------------ | ---------------------------------------------------------------------------------------------------- |
-| `no-call-log-assertions` | `toHaveBeenCalled*` on an `expect()` chain — that it was called, how often, in what order, with what |
-| `no-mock-assertions`     | `expect()` on a stand-in, or on anything read through one                                            |
-| `no-local-module-mocks`  | `mock.module()` or `spyOn()` over a relative import                                                  |
-| `no-real-timers`         | the timer globals, `Bun.sleep`, and the `node:timers` modules                                        |
+| Rule                       | What it rejects                                                                                                       |
+| -------------------------- | --------------------------------------------------------------------------------------------------------------------- |
+| `no-call-log-assertions`   | `toHaveBeenCalled*` on an `expect()` chain — that it was called, how often, in what order, with what                  |
+| `no-mock-assertions`       | `expect()` on a stand-in, or on anything read through one                                                             |
+| `no-local-module-mocks`    | `mock.module()` or `spyOn()` over a relative or aliased import                                                        |
+| `no-real-timers`           | the timer globals, `Bun.sleep`, and the `node:timers` modules                                                         |
+| `no-unfailable-assertions` | an `expect()` a branch, a returning guard, a `catch` or an event callback can skip, and `.toThrow()` with no argument |
 
 What they have in common is that each of them passes against an implementation
 nobody would ship. A call log grades the collaborator calls an implementation
@@ -656,9 +881,90 @@ is the test's own object, so an assertion about it is about what the test
 already did; a fake over a module in this repo grades the fake rather than the
 module, and the real one is right there to call; and a suite that waits for real
 time is slow in proportion to how much of it it waits for and flaky in
-proportion to how loaded the runner is.
+proportion to how loaded the runner is. An assertion a run can skip, or one any
+error satisfies, passes against every implementation, the broken one included.
 
-All four recognise their subject **through the import**, never through the name
+`no-unfailable-assertions` reports an assertion a passing run can go without,
+in five shapes, each with what to write instead:
+
+- an `expect(…)` that runs only when a condition holds: in an arm of an `if` or
+  a `?:`, on the right of `&&`, `||` or `??`, or in a `switch` case;
+- an `expect(…)` below a guard that returns: an `if` earlier in the same block
+  with an arm that can take a bare `return;` and asserts nothing on the way,
+  such as `if (!found) return;` above `expect(found)`. A `return <value>` is no
+  guard, since it answers a caller the rule cannot see (a polling helper
+  retries on `false`), and neither is a guard pinned by an earlier assertion:
+  one in the same block whose subject is read out of a name the condition
+  reads (`found` in `expect(found.size)` and `if (!found)`), a property name
+  never counting as one;
+- an `expect(…)` in a `catch` clause or in a promise's rejection handler (a
+  function passed to `.catch`, or as `.then`'s second argument), which runs
+  only when something throws;
+- an `expect(…)` in a callback handed to an event registration (`on`, `once`,
+  `addEventListener`, `subscribe`), which nothing in the test waits for;
+- `.toThrow()` or `.toThrowError()` with no argument, on `expect(…)` or after
+  `.rejects`. `.not.toThrow()` with no argument is what it should be and is
+  left alone.
+
+An assertion in a branch is not reported when every passing run down the other
+path asserts too. That path is the other arm of the `if` or `?:`, an `else if`
+chain included when it ends in an `else` that asserts. An other arm counts as
+asserting when every path through it throws, since no run through it passes, an
+`else if` chain whose every arm throws included, and so a guard that throws
+(`if (!found) throw …;`) is no guard. When no path through the arm holding the
+assertion runs on (each leaves by `return`, `continue`, `break` or `throw`), the
+statements after the branch are on the other path too, as long as no path
+through the other arm leaves first: `if (late) { expect(late)…; return; }
+expect(onTime)…` asserts on every path. An arm that runs on has no other path of
+its own, so an assertion after the branch does not excuse one inside it. The
+paths are read through blocks, `if`s and loops, where a loop may run no turn,
+so a `return` inside it is a path that leaves and the loop may still run on.
+
+A loop, and a function handed to an array method, `.then`, `.finally`, a retry
+or polling helper or a property, run what they are given, so an assertion there
+is as skippable as the call it is handed to and no more. A function handed to
+the runner (`test`, `describe`, `test.each(…)(…)`, `mock`) is not judged by
+what surrounds that call: a test registered on some runs only is a skipped
+test, which the run's own report counts. An un-awaited `.resolves` or `.rejects` is
+`typescript/no-floating-promises`'s, and a case with no assertion at all is the
+test-suite gate's JUnit check's. A report the rule gets wrong takes
+`// oxlint-disable-next-line anti-slop/no-unfailable-assertions -- <reason>` on
+its line.
+
+What it does not see:
+
+- a guard that ends one element's turn: `continue` or `break` in a loop, or a
+  `return` in an array method's callback (`forEach`, `map` and the rest), above
+  an assertion, and a loop over a collection that turns out empty;
+- an arm it cannot read: one holding a `switch` or a `try` with a `return` or a
+  `throw` inside, whose fall-through cases and `finally` decide which of them
+  happens. Nothing that rests on such an arm is reported, whether it is the
+  other arm, the arm holding the assertion or a guard's arm;
+- a guard written inside a nested block rather than as an `if` of the block the
+  assertion sits in;
+- whether a pin holds: the pin is a match on a name, and does not prove the
+  earlier assertion fails on every run the guard would return on, so
+  `expect(r).toBeDefined(); if (!r.ok) return;` is silent;
+- an array method's name called on something that is not an array
+  (`opt.map(…)`), whose callback is read as one element's turn all the same;
+- a callback handed to a function of the repo's own that never calls it;
+- a handler passed by reference (`emitter.on("done", seen)`), whose body is
+  written elsewhere in the file;
+- an assertion inside a timer or microtask callback (`setTimeout`,
+  `queueMicrotask`), which a test that advances its clock or drains the queue
+  does run.
+
+Each of those is a fact about values or about code written somewhere else, and
+the rule answers only for where an assertion is written.
+
+What `no-call-log-assertions` accepts in place of a call log is a typed fake at
+the boundary that records the requests it received, asserted on as the whole
+list: `expect(mailer.sent).toEqual([{ to: "a@b.nl", subject: "Invoice" }])`. That
+grades what the code under test asked the outside world for, all of it, in order,
+and it fails when a request is added, dropped or changed, which a count or a
+`toHaveBeenCalledWith` on one call does not.
+
+All of them recognise their subject **through the import**, never through the name
 written at the call site. `import { mock as m }`, `import * as bt from
 "bun:test"`, `import bt from "bun:test"` — a default import is the same object
 under Bun's CJS interop — and vitest's or jest's spelling of the same call are
@@ -677,13 +983,20 @@ spelling behind forever. Calling the stand-in is the other side of that line:
 thing about a stand-in worth asserting on, and an object of the test's own with
 a `mock` property on it is not a stand-in at all. For `no-local-module-mocks`
 the line is the specifier: a package is a true external boundary, so
-`mock.module("stripe", …)` is not what that rule is about.
+`mock.module("stripe", …)` is not what that rule is about. A specifier starting
+`./`, `../`, `@/`, `~/` or `#` is this repo's own; a scoped package
+(`@scope/pkg`) and a `node:` or `bun:` builtin are not. The rule reads one file
+and no config, so an alias a repo spells another way is not seen, and a `#`
+subpath import that `package.json` maps to an external package is read as ours.
 
 #### The environment is read in one module
 
 `no-env-access` answers a different question from the rules above: where
-configuration comes from. It refuses `process.env`, `Bun.env` and
-`import.meta.env` everywhere except `**/env.ts` and a suite.
+configuration comes from.
+
+| Rule            | What it rejects                                                                |
+| --------------- | ------------------------------------------------------------------------------ |
+| `no-env-access` | `process.env`, `Bun.env` and `import.meta.env` outside `**/env.ts` and a suite |
 
 | Where           | What it is                                                              |
 | --------------- | ----------------------------------------------------------------------- |
@@ -809,13 +1122,22 @@ the choke rules above stay per-repo. There is nowhere else for it to go
 either. The base enables every rule this plugin defines, and the suite requires
 those two sets to be equal, so the plugin has no opt-in half to put it in.
 
-One rule answers differently from upstream, because a rule at `error` across
+These rules answer differently from upstream, because a rule at `error` across
 the fleet must refuse something the author can change:
 
 - **`no-known-value-widening`** does not call an anonymous object type a
   widening when it names exactly the keys of the literal below it. Upstream
   does, and its only escapes are deleting the return type or inventing a name
-  for it — the opposite of what this repo asks for everywhere else.
+  for it — the opposite of what this repo asks for everywhere else. Nor does it
+  call a record over a fixed set of keys one, or a dictionary looked up by a
+  run-time key, for the reasons in the exemptions above.
+- **`no-unknown-parameters`** leaves a rejection handler's reason, and
+  **`no-unknown-returns`** a function type's promise of `unknown`, both above.
+
+Upstream ships no fixture for a fixed-key record, a run-time-indexed
+dictionary, a rejection reason or a function type's promise of `unknown`, so
+`tests/anti-slop-upstream.test.ts` runs every upstream case unchanged and
+records only the anonymous-object difference.
 
 Two facts about how it is wired, both load-bearing:
 
@@ -830,16 +1152,27 @@ Two facts about how it is wired, both load-bearing:
 `tests/anti-slop.test.ts` drives the unscoped rules with the real binary: a block of cases
 per rule — alias chains, shadowed built-ins, type parameters bound by default,
 permuted between two aliases and named for the aliases they shadow, the scope a
-binding resolves in, and the clean tree each of those has to leave alone — plus
-upstream's own fixtures for the six rules it ships tests for, run as a
-differential oracle against this port. It also asks the plugin and the base for
+binding resolves in, and the clean tree each of those has to leave alone.
+Upstream's own fixtures, for the six rules it ships tests for, run as a
+differential oracle against this port in `tests/anti-slop-upstream.test.ts`.
+`tests/anti-slop.test.ts` also asks the plugin and the base for
 their rule names and requires them to match: a rule the base does not enable is
 a rule no repo runs, and a name in the base the plugin does not define is a rule
-nobody notices is missing.
+nobody notices is missing. And it requires the tables in this section to name
+the plugin's rules, each once, so no count or list in prose can drift from them.
 
-`tests/anti-slop-test-smells.test.ts` is the other four, which have a second
+`tests/anti-slop-test-support.test.ts` is the two rules of this plugin that the
+suite scope turns on or off and no other suite grades there,
+`no-chained-type-assertions` and `no-test-support-imports`; the scope's
+switch-offs of `no-env-access` and `no-unnamed-effects` are graded with those
+rules, in `tests/anti-slop-env.test.ts` and `tests/oxlint-base.test.ts`. It reads
+that scope's globs off the base and grades a file under each of them as test
+code, a source file, a story and a seed script as code that ships, and an
+import of each support-file name the base carries as refused.
+
+`tests/anti-slop-test-smells.test.ts` is the test-smell rules, which have a second
 question to answer about every case — the base has to catch them in a
-`.test.ts`, a `.spec.ts` and both `.tsx` spellings, and to say nothing about the
+`.test.ts`, a `.spec.ts`, both `.tsx` spellings and both support-file names, and to say nothing about the
 same source in a `.ts` or a `.tsx`, since a rule that fired everywhere is one
 every repo would turn off. Most of its cases are the spellings that would
 otherwise turn a rule off: an `as` on an import, a namespace, an optional link,
@@ -874,11 +1207,15 @@ suite: they key off imports from `jest`/`vitest`, and these repos import from
 `bun:test`. Turning them on produces a config that reports nothing and looks like
 coverage.
 
-So the properties those rules would have checked — that a test asserted
-something, that nothing was skipped — are enforced by the JUnit greps in the
-`test-suite` action instead, on the report of a run that actually happened. That
-is the correct layer and the only one available: do not "improve" the gate by
-moving it into the linter.
+So the properties those rules would have checked — that a case asserted
+something at all, that nothing was skipped — are enforced by the JUnit greps in
+the `test-suite` action instead, on the report of a run that actually happened.
+That is the correct layer and the only one available for them. What the JUnit
+counts cannot see is an assertion that is written and still cannot fail: one a
+branch, a returning guard, a `catch` or an event can keep from running, which counts as an
+assertion on every run that reaches it, and a `.toThrow()` any error passes.
+Where an assertion sits is a fact of the syntax, so that half is the linter's,
+in `no-unfailable-assertions` above.
 
 ## Architecture boundaries
 
@@ -939,7 +1276,7 @@ own theme and components:
 | Rule                            | Refuses                                                                      | The diagnostic names                                                        |
 | ------------------------------- | ---------------------------------------------------------------------------- | --------------------------------------------------------------------------- |
 | `shadcn/no-raw-colors`          | a palette colour (`bg-pink-500`), or a colour the theme does not declare     | the nearest theme colours, or the declared list                             |
-| `shadcn/no-arbitrary-values`    | an arbitrary value (`p-[13px]`)                                              | the scale class with the same value (`p-3.25`)                              |
+| `shadcn/no-arbitrary-values`    | an arbitrary value outside layout (`p-[13px]`, `text-[11px]`)                | the scale class with the same value (`p-3.25`)                              |
 | `shadcn/no-restyle`             | a class on a shared component beyond placing it (`<Button className="p-4">`) | the component's sizes or variants, and margin or a parent's gap for spacing |
 | `shadcn/no-inline-styles`       | `style={{ … }}` and `<style>`                                                | classes, and a CSS custom property for a value known only at runtime        |
 | `shadcn/no-unknown-classes`     | a class the repo's own Tailwind cannot generate (`rounded-xll`)              | the class it most likely meant                                              |
@@ -949,7 +1286,13 @@ Which rules are on, and that a page may only place a shared component, is the
 fleet's and lives in the base: `no-restyle` allows the `layout` category —
 margin, width, position, visibility — and refuses colour, typography, spacing,
 shape, effects and motion, which are the component's through its variants.
-Everything keyed to the repo's own paths is the repo's, in `.oxlintrc.json`:
+`no-arbitrary-values` allows the same category, as upstream's setup does:
+Tailwind's spacing scale is continuous, so `w-[170px]` and `w-42.5` are one
+value spelled two ways, and only the other six categories are theme tokens a
+bracket can step around. `no-inline-styles` is off in the suite scope, the same
+globs the [overrides](#overrides) give a suite's helpers: a fixture's style is
+not a screen, and a DOM test environment loads no stylesheet. Everything keyed
+to the repo's own paths is the repo's, in `.oxlintrc.json`:
 
 ```jsonc
 {
@@ -964,8 +1307,11 @@ Everything keyed to the repo's own paths is the repo's, in `.oxlintrc.json`:
     {
       "files": ["src/components/ui/**"],
       "rules": {
-        // A shared component styles itself; the rule is about the pages that use it.
+        // A shared component styles itself, and may need a structural value
+        // such as ring-[3px]; these rules are about the pages that use it.
         "shadcn/no-restyle": "off",
+        "shadcn/no-arbitrary-values": "off",
+        "shadcn/require-static-classes": "off",
       },
     },
   ],
@@ -978,8 +1324,18 @@ Everything keyed to the repo's own paths is the repo's, in `.oxlintrc.json`:
   `components/ui` or `src/components/ui` directory under the package root is
   recognised, and `no-restyle` and `require-static-classes` see no component
   anywhere else.
-- The override is a switch-off, so it carries its reason like any other
+- The override is upstream's own adoption setup: `no-restyle`,
+  `no-arbitrary-values` and `require-static-classes` are off where the
+  components are written, and `no-raw-colors` and `no-inline-styles` stay on
+  there. It is a switch-off, so
+  it carries its reason like any other
   ([the repo contract](docs/gates/repo-contract.md)).
+- A value known only at runtime goes through a custom property and a class
+  that reads it, `style={{ "--panel-width": … }}` with `w-(--panel-width)`.
+  React's types refuse that key, and the cast upstream documents is one the
+  oxlint base refuses, so a repo names
+  [`css-custom-properties`](docs/exports/css-custom-properties.md) in its
+  `compilerOptions.types`.
 - The theme is found rather than named: without `components.json`, it is the
   stylesheet under the package root that imports `tailwindcss` and declares the
   most colour tokens. `no-unknown-classes` asks the repo's own installed
@@ -994,8 +1350,7 @@ The base names the plugin by a bare specifier, so it resolves from the repo's
 own install: `@shadcn/lint` goes in the devDependencies of the manifest that
 declares this package, and it needs oxlint 1.80 or later. A repo extending the
 base without the plugin installed fails to load its config rather than linting
-without the rules. knip reads `jsPlugins` from the repo's own config only, so
-the repo also spreads `designSystemDependencies` ([knip](#knip)).
+without the rules.
 
 Whether a repo owes the base is not its call: the repo contract refuses a tree
 with `tailwindcss` in any manifest whose `.oxlintrc.json` does not extend it.
@@ -1041,10 +1396,12 @@ because `treatConfigHintsAsErrors` makes an ignore matching no declared
 dependency an error — carrying it in the base would fail knip in every repo that
 does not run the lane.
 
-`designSystemDependencies` is the same shape for a repo extending
-[the design-system base](#design-system): the base names `@shadcn/lint` in its
-`jsPlugins`, and knip reads `jsPlugins` out of the repo's own `.oxlintrc.json`
-without following `extends`, so it reports the package as unused.
+The knip peer range starts at 6.38, the first release that follows
+`.oxlintrc.json`'s `extends` into this package. From there knip counts the
+package as used, and with it the `@shadcn/lint` the package declares as a peer,
+so a repo extending [the design-system base](#design-system) ignores nothing for
+it, and an ignore of it is a configuration hint (probed, knip 6.37.0 and
+6.38.0).
 
 ## Tests and coverage
 
@@ -1079,6 +1436,16 @@ been wrong. [The mutation lane](docs/gates/mutation-lane.md) asks that, over the
 domain files a branch changed, and `mutation-floor` is the same paragraph again
 for the number it publishes.
 
+**Page tests in a real browser** run under Vitest's browser mode, beside
+`bun test` for everything else. The stack denylist denies `vitest` because
+`bun test` is the runner, so a repo with such tests names it in its
+`stack-allowlist` with that as the reason: `vitest -- page tests run in a real
+browser`. Those tests never reach the test-suite gate's JUnit and coverage
+checks, so the repo's own browser job holds them, failing on a case that fails,
+is skipped or asserts nothing. The repo also sets `mutation-tests`, because the
+mutation lane's walk of the project would otherwise load its browser test files
+into a plain `bun test`.
+
 ## Renovate
 
 `default.json` at this repo's root is a shareable preset. Consuming repos are one
@@ -1094,14 +1461,52 @@ line:
 The preset runs weekly, holds every release but this organisation's own for the
 release-age window, opens a vulnerability fix at once
 ([Version policy](#version-policy) has both), groups patch, minor, pin and
-digest updates into one automerging PR, opens majors as plain PRs to read, keeps
-lockfile maintenance on, and pins GitHub Action digests.
+digest updates into one PR per week that merges itself once its checks are
+green, opens majors as plain PRs to read, keeps lockfile maintenance on, and
+pins GitHub Action digests. Renovate pushes to an open PR only inside that
+weekly window (`updateNotScheduled: false`). Left at its default, it rebases an
+open PR whenever the base branch moves, and every push runs the PR's CI again.
 
-Two families move as a unit rather than as packages. Every `expo*`,
+An `oxfmt` update gets an "oxfmt" PR of its own that never merges itself. A
+formatter release can change how it writes a file, and the format check then
+fails until someone runs `oxfmt` on the PR's branch and commits the result,
+which Renovate never does; left in the week's group, it would stop the group
+merging itself every time.
+
+Three families move as a unit rather than as packages. Every `expo*`,
 `@expo/*` and `react-native*` pin belongs to one Expo SDK release, and a partial
 bump builds and then fails on a device, so they group into one "Expo SDK" PR that
-is never automerged. `better-auth` and its `@better-auth/*` plugins are versioned
-in lockstep, and a plugin ahead of its core fails at import.
+never merges itself. `better-auth` and its `@better-auth/*` plugins are versioned
+in lockstep, and a plugin ahead of its core fails at import. `oxlint`,
+`@oxlint/plugins` and `oxlint-tsgolint` move in one "oxlint" PR: each oxlint
+release declares the tsgolint range it runs, bun installs a pair outside that
+range without a warning, and the repo contract refuses such a pair in
+`bun.lock`.
+
+The `gokayo43/dev-config` and `gokayo43/dev-config-db` pins move in a
+"dev-config" PR of their own, never in the week's group: the branch
+`renovate/dev-config` for every move but a major, which gets a branch of its
+own. Neither merges itself: a pin carries gate code, and moving it is that
+repo's own change under its own gates. Each waits for whoever moves the pin,
+who either takes its branch as the start of the change or moves the pin on a
+branch of their own, after which Renovate closes it.
+
+The limit of three open PRs (`prConcurrentLimit`), and of two opened per hour
+(`prHourlyLimit`), never holds a patch, minor, pin or digest update, whichever
+group it lands in and whether its PR merges itself or waits for a reader: three
+PRs left unread would otherwise stop the week's group, or the non-major moves
+of the Expo SDK and dev-config groups, from being opened at all. It holds every
+other update, majors and lockfile maintenance most often, so an Expo SDK
+release, which is a major of `expo`, and a major of a dev-config pin open only
+while fewer than three PRs are open. The exempt PRs still count toward those
+three.
+
+A repo's own `renovate.json` that switches self-merge off for a package
+(`"automerge": false`) gives that package a `groupName` of its own. Renovate
+merges a grouped PR only when every update in it may merge itself, so a package
+left in the "non-major dependencies" group stops the whole group merging
+itself. A rule that switches self-merge off for every update type leaves the
+group as one PR to read, which is the same decision for all of it.
 
 The file is named `default.json` because that is the name Renovate resolves for a
 bare `github>owner/repo`; `renovate.json` as a preset name is deprecated.
@@ -1140,9 +1545,10 @@ env:
   TOOL_SHA256: <sha256 of the release archive>
 ```
 
-A tool more than one caller needs is fetched by a shell library under
-`.github/actions/_lib/` instead, and the pin goes there — beside the fetch, so
-it is written once however many callers there are. The one manager reads a shell
+A tool more than one caller needs, or one a command runs outside any workflow,
+is fetched by a shell library under `.github/actions/_lib/` instead, and the pin
+goes there — beside the fetch, so it is written once however many callers there
+are, and where the manager's pattern already moves it. The one manager reads a shell
 assignment as readily as a YAML key:
 
 ```sh
@@ -1151,9 +1557,9 @@ TOOL_VERSION=v1.2.3
 TOOL_SHA256=<sha256 of the release archive>
 ```
 
-Two live ones sit there. `_lib/k6.sh`: db-gate's ramp, this repo's own execution
-of the shipped script, and `project-template`'s ramp against a preview stack are
-three callers of one pin, and a ramp is only comparable with another ramp of the
+Two live ones sit there. `_lib/k6.sh` is the one k6 the
+[`capacity-ramp`](docs/commands/capacity-ramp.md) command runs, and each result
+records its version, since a ramp is only comparable with another ramp of the
 same k6. `_lib/shellcheck.sh`: the `shell-scripts` gate over a repo's tracked
 scripts, and this repo's own pass over the scripts inlined in its composite
 actions — and what the pin buys is
@@ -1168,7 +1574,9 @@ cover the next tool without touching the preset.
 
 One pin does live in this README and is managed: the `GITLEAKS_VERSION=` line in
 the local install snippet below, which carries no checksum and has a second,
-tiny manager of its own.
+tiny manager of its own. That manager is in the preset, so it reads a
+`GITLEAKS_VERSION=` line in every `README.md`, at any depth, of every repo that
+extends it.
 
 The datasource is what makes this safe. `github-releases` would move the version
 and leave the checksum, and a version bumped past a stale `sha256sum -c` fails
@@ -1191,22 +1599,30 @@ typechecks, lints, formats and tests the code that implements them, parses every
 JSON file, validates the preset, checks the Lighthouse budget, and lints the half
 of it that executes.
 
-Three contract facts are exempted in `ci.yml`, each structural: the configs
-inherit from this repo's own bases by relative path because a package cannot
-extend itself by name, CI is that file rather than a call into `check.yml`
-because a commit cannot pin its own SHA, and there is no runtime environment to
-shape.
+Five facts are structural, and `ci.yml` names them. Three are exemptions of the
+repo contract: the configs inherit from this repo's own bases by relative path
+because a package cannot extend itself by name, CI is that file rather than a
+call into `check.yml` because a commit cannot pin its own SHA, and there is no
+runtime environment to shape. Two are gates this repo does not run on itself.
+There is no mutation lane, because this repo is gate scripts with no pure
+domain layer to mutate, and its suite drives that gate against fixture
+repositories instead. And the test-suite action is substituted, because its
+seal's network namespace does not reach the Postgres, MySQL and Redis this
+suite needs on the host's loopback, which drops the seal, the junit report and
+the two checks over it that refuse a skipped test and an assertion-free one:
+this repo is the one repo not held to them (dev-config#58).
 
-The gates are TypeScript under `.github/actions/*/`, and `bun test` is what
+The gates are TypeScript under `.github/actions/*/`, and `bun run test` is what
 proves each one refuses a violating tree and passes a clean one — the suites
 build a real git repository per case, because the gates ask git what is tracked
-and what is ignored. Every other repo's gate is only as honest as those two
-lanes, which is why they run first.
+and what is ignored. Every other repo's gate is only as honest as that suite.
 
 The replay suite needs a real Postgres, since what it asserts is what two
-databases end up holding. It creates and **drops** databases on whatever it is
-pointed at, so `TEST_DATABASE_URL` is required and the suite refuses to guess —
-`tests/postgres.ts` is its one reader. A default would point it at whatever
+databases end up holding, and so do the request-timing Bun.sql and TanStack
+Start suites, since what they grade is what Bun.sql and drizzle do against
+one. They create and **drop** databases on whatever they are pointed at, so
+`TEST_DATABASE_URL` is required and the suites refuse to guess —
+`tests/postgres.ts` is its one reader. A default would point them at whatever
 answers on `localhost`, which on a machine running the fleet's stacks is a
 Postgres holding their data.
 
@@ -1241,6 +1657,25 @@ bun .github/actions/services/services.main.ts stop "$root" /dev/null
 Both listen on `127.0.0.1` alone, each on a port the kernel picked, so nothing
 off the machine reaches them and the two pairs never collide.
 
+The request-timing mysql2, Elysia, Next.js and tRPC suites need a MySQL, since
+what they grade is what mysql2 and drizzle do against a real server, and the
+Elysia and Bun Redis suites the Redis above. They
+create and **drop** a database of their own on the MySQL and write their keys
+under a prefix of their own on the Redis. The prefix keeps their keys apart
+from each other's, not from the limiter conformance suite, which flushes the
+same Redis between its cases, so two runs that share one Redis can wipe each
+other's keys: give each run a Redis of its own. `TEST_MYSQL_URL` is required
+and refuses to guess for the reason the Postgres does:
+
+```sh
+docker run --rm -d -p 127.0.0.1:3417:3306 -e MYSQL_ROOT_PASSWORD=mysql --tmpfs /var/lib/mysql:size=1g mysql:8.0.42
+export TEST_MYSQL_URL=mysql://root:mysql@127.0.0.1:3417/mysql
+```
+
+It publishes on `127.0.0.1` explicitly: a bare `-p 3306:3306` binds `0.0.0.0`,
+and Docker's forwarding rule answers it on the box's public address whatever
+`ufw` is set to.
+
 The preset suite runs Renovate's validator with the `re2` addon, which `bun
 install` builds from source, so a machine running it carries `g++`, `make`,
 `python3` and its Node's headers, as "Where it runs" lists for the hosted image.
@@ -1264,8 +1699,10 @@ network namespace costs. A machine whose sudo asks for a password runs
 `sudo -v` in the same terminal first; one with no sudo cannot run the sealed
 cases honestly. The
 cases about the call itself (what the step hands the helper) put a stand-in
-`sudo` on `PATH` and run anywhere. It is the one gate here whose subject is not
-a module, so its cases extract the step out of the shipped `action.yml` and
+`sudo` on `PATH` and run anywhere. The file lock's and the dev server's suites
+need passwordless `sudo` too, to mount a `/proc` that hides other users'
+processes. The test-suite gate is the one gate here whose subject is not a
+module, so its cases extract the step out of the shipped `action.yml` and
 drive it over test suites of their own.
 
 The linting is the `lint-workflows` action — actionlint, pinned by version and
@@ -1315,7 +1752,7 @@ config migration exit non-zero rather than print.
 
 ## One dev server per worktree
 
-`dev-server.ts` is the one root module a repo **runs** rather than imports:
+`dev-server.ts` is a root module a repo **runs** rather than imports:
 installing this package puts a `dev-server` binary in `node_modules/.bin`, so
 every worktree of the repo has the same six commands without a script of its
 own. `dev-server-derive.ts` beside it is the half that can be answered without a
@@ -1386,8 +1823,9 @@ derives again.
 with a lock file beside the record. Two of them racing that sequence both bind:
 measured, five concurrent pairs left four servers running that no record named.
 A lock whose holder is gone is taken rather than waited on — the holder is named
-by pid, boot id and start tick, exactly as a server is — so a run killed
-mid-`up` costs the next one nothing.
+by pid, boot id and start tick, exactly as a server is, and a holder that has
+exited is gone whether or not it has been reaped — so a run killed mid-`up`
+costs the next one nothing.
 
 **A recorded pid is not trusted on its number.** A pid is reused, and a reboot
 recycles every one of them at once, so the record carries the boot id it was
@@ -1397,6 +1835,21 @@ nobody. Since what gets signalled is a process _group_, the pid must also still
 lead its own — which `setsid` guarantees for anything this tool started, and
 nothing else. A record whose pid or port is a number no derivation here could
 have produced is not a record at all.
+
+**A server that has died is stopped, whether or not it has been reaped.** A
+process that has exited keeps its `/proc` entry, as a zombie, until whatever
+adopted it reaps it, which a busy machine does late. Every command reads such a
+server as not running: `status` shows it dead, `up` starts a fresh one, and
+`down` forgets its record, says it was already gone and exits 0. Dead means
+state `Z` or `X` (`/proc/<pid>/stat` field 3) with no thread still running
+(field 20, the thread count, at most 1): a process whose main thread alone has
+exited shows `Z` as well, and still runs. Until the dead leader is reaped it
+pins its process group, so whatever still runs in that group is provably the
+server's: `down`, and `up` before it starts the fresh one, send the group
+SIGKILL, with no grace period since the server is already dead, and forget or
+replace the record only once nothing in the group runs. Once the leader is
+reaped nothing proves the group is the server's, and anything that outlived it
+is left alone.
 
 **The records live in git's common directory** — `$(git rev-parse
 --git-common-dir)/dev-server/`, mode 0700, with each record and log 0600 because
@@ -1590,37 +2043,38 @@ a caller who did not, and where a real default exists it is applied further down
 here at all: the boot gate's health URL carries a port the job allocates while
 it runs. Effect says which, per input.
 
-| Input                 | Declared | Effect                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
-| --------------------- | -------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `build`               | `false`  | Runs `bun run build` before the static gate and before the boot gate.                                                                                                                                                                                                                                                                                                                                                                                                                               |
-| `build-cache`         | `""`     | Paths the build tool caches in, one per line, relative to the repository root, such as `.next/cache` for Next. Restored from GitHub's Actions cache before the build and saved after one that passed, under a new key per save; the restore takes the newest save under the lockfile's key. A store failure warns and builds cold. Refused: an absolute path, a `~` path, a glob character, a `..` segment, the root itself, a path named twice or inside another, no `bun.lock`, no `build: true`. |
-| `nightly`             | `false`  | The run nobody is waiting on: property tests get fifty times the runs they ask for with a two-minute limit on each, the fuzzer gets ten minutes instead of twenty seconds, and both jobs get a timeout that fits. The caller supplies the schedule, and a second job of its own files what a red one leaves behind — [The nightly run](#the-nightly-run).                                                                                                                                           |
-| `affected`            | `false`  | Runs the `typecheck` lane over the packages a pull request changed, via turbo's `--affected` with `TURBO_SCM_BASE` set to the pull request's base commit. Needs `turbo.json` at the root and is refused without one; ignored on a push, where `main` stays the full run.                                                                                                                                                                                                                            |
-| `database`            | `none`   | `postgres` adds the database job: an empty Postgres, the migrations replayed onto it twice, the app booted against the result, and a k6 ramp over every route it serves. `external` says a workflow wrapping this one runs the database gates in that job's place. `none` is a repo with no schema. Anything but `none` makes `db:migrate` part of the repo contract; anything outside the three is refused.                                                                                        |
-| `compose`             | `false`  | Holds `docker-compose.yml` to the deployment shape.                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
-| `mutation-lane`       | `false`  | Mutates the domain files this branch changed and fails on a mutant its own lines left undetected, on a run whose suite was already failing unmutated, or on one that graded only part of what it mutated. Reads the pure domain from the `boundaries/elements` entry typed `domain`; needs `@stryker-mutator/core` and `@hughescr/stryker-bun-runner` among the repo's devDependencies.                                                                                                             |
-| `mutation-floor`      | `""`     | The mutation score the changed domain files must hold, as a fraction between 0 and 1. Empty publishes the score and enforces nothing. Needs `mutation-lane: true`.                                                                                                                                                                                                                                                                                                                                  |
-| `duplicate-code`      | `false`  | Fails on a run of twelve or more lines, comments and whitespace aside, that this branch wrote and that also appears elsewhere in the repo's source. Kept by `// duplicate-code-allow -- <reason>` on the clone's first line or the line above; a file `.gitattributes` marks `linguist-generated` is not read. Needs the base ref, which `fetch-depth: 0` gives it.                                                                                                                                 |
-| `upgrade-gate`        | `false`  | Also proves that a database upgraded from the base ref's migrations reaches the schema a fresh one gets. Needs `database: postgres`; for repos whose database is deployed.                                                                                                                                                                                                                                                                                                                          |
-| `semantic-fixtures`   | `""`     | A directory of the repo's own holding the rows a deployed database already has, as base-compatible SQL, each with the assertion the current contract makes about them: written into the base ref's replay and graded after this branch's migrations run over them. Needs `upgrade-gate: true`. Needs `database: postgres`.                                                                                                                                                                          |
-| `contract-exemptions` | `""`     | Repo-contract facts this repo is structurally unable to satisfy, space-separated. A marketing site names `docs-spine`; a repo being wound down names `lifecycle-retire`.                                                                                                                                                                                                                                                                                                                            |
-| `data-jobs-external`  | `""`     | Where the deployment already runs a live repo's backup and restore drill, when they are not this repo's own scripts — the job, its schedule and the runbook. Empty asks for `scripts/backup.sh` and `scripts/restore-drill.sh` with their units. The reason is the waiver, so there is no way to claim it without naming the jobs.                                                                                                                                                                  |
-| `stack-allowlist`     | `""`     | Packages this repo keeps against the stack denylist, as `<package> -- why` entries, one per line; an entry is refused when it carries no reason, when nothing here declares the package any more, or when the denylist has stopped denying it.                                                                                                                                                                                                                                                      |
-| `backfill-seed`       | `""`     | Shell code putting a database into the state this repo's backfill was written for. Set it with `backfill-command` or not at all. Needs `database: postgres`.                                                                                                                                                                                                                                                                                                                                        |
-| `backfill-command`    | `""`     | The backfill, as shell code: run twice against the state `backfill-seed` wrote, in a database of the check's own, with the data compared either side of the second run. Needs `database: postgres`.                                                                                                                                                                                                                                                                                                 |
-| `start-command`       | `""`     | How the boot gate starts the app. Empty takes `bun run start`, applied by the database job rather than declared here, so that the guard can tell a caller who passed this from one who did not. Needs `database: postgres`.                                                                                                                                                                                                                                                                         |
-| `health-url`          | `""`     | What the boot gate polls until it answers 200. Empty takes `http://localhost:${PORT}/api/health`, applied by the database job — `PORT` is the port that job allocates, for the reason "Where it runs" above gives. Needs `database: postgres`.                                                                                                                                                                                                                                                      |
-| `probe-command`       | `""`     | A command of the repo's own, run as shell against the booted app after it answers its health route and before the ramp, with the app's URL in `HEALTH_URL`. Its stdout is the verdict: every line it writes there is one problem, whatever it exits with. Needs `database: postgres`.                                                                                                                                                                                                               |
-| `probe-timeout`       | `""`     | How many seconds `probe-command` gets before it is killed. Empty takes the bound `db-gate/probe.ts` declares — 120 seconds today — which is where that number and the argument for it live. Needs `probe-command`. Needs `database: postgres`.                                                                                                                                                                                                                                                      |
-| `timestamp-allowlist` | `""`     | `schema.table.column -- why` entries whose value really is a wall-clock reading rather than an instant, one per line; an entry is refused when it carries no reason, when the schema has no column of that name, or when that column is no longer a wall-clock one. Needs `database: postgres`.                                                                                                                                                                                                     |
-| `capacity-path`       | `""`     | Paths to ramp alongside the health route, one per line. Needs `database: postgres`.                                                                                                                                                                                                                                                                                                                                                                                                                 |
-| `fuzz-seed`           | `""`     | The seed the route fuzzer generates from: paste the number a failing run printed to send that run again. Empty derives one from the run's id, so a re-run searches somewhere new. Needs `database: postgres`.                                                                                                                                                                                                                                                                                       |
-| `capacity-script`     | `""`     | A k6 script of the repo's own, replacing the shipped ramp. Needs `database: postgres`.                                                                                                                                                                                                                                                                                                                                                                                                              |
-| `db-gate-evidence`    | `""`     | The artifact name for the k6 summary, the two route-log snapshots, the route table the committed snapshot must hold, the backfill check's three data dumps, the fuzzer's report and the app's output, for a matrix that runs more than one leg. Empty takes `db-gate`'s own name, which is where that default lives. Needs `database: postgres`.                                                                                                                                                    |
-| `route-allowlist`     | `""`     | Routes the ramp cannot cover, as `METHOD /path -- why` entries, one per line; one without a reason, and one the ramp did reach, are both refused. Needs `database: postgres`.                                                                                                                                                                                                                                                                                                                       |
-| `route-retire`        | `""`     | Routes this repo has deliberately stopped serving, as `METHOD /path -- why` entries matching the base ref's `routes.snapshot.json`, one per line. Graded where the `lifecycle` field says `live`, which is where the base ref's routes are held at all; an entry without a reason, one the base ref never served, one the app still serves, and the whole input on a repo that holds nothing are all refused. Needs `database: postgres`.                                                           |
-| `test-network`        | `""`     | Why this repo's suite has to reach a real network. Empty runs the suite sealed in a network namespace with nothing but loopback in it, so a live call fails where it is written. The reason is the input, and it is read in review like the reason on a lint directive.                                                                                                                                                                                                                             |
-| `test-suite-evidence` | `""`     | The artifact name for the junit report, for a matrix that runs more than one leg. Empty takes `test-suite`'s own name, which is where that default lives.                                                                                                                                                                                                                                                                                                                                           |
+| Input                        | Declared | Effect                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
+| ---------------------------- | -------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `build`                      | `false`  | Runs `bun run build` before the static gate and before the boot gate.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
+| `build-cache`                | `""`     | Paths the build tool caches in, one per line, relative to the repository root, such as `.next/cache` for Next. Restored from GitHub's Actions cache before the build and saved after one that passed, under a new key per save; the restore takes the newest save under the lockfile's key. A store failure warns and builds cold. Refused: an absolute path, a `~` path, a glob character, a `..` segment, the root itself, a path named twice or inside another, no `bun.lock`, no `build: true`.                                                                                                                                                                                                                                                                                                                                                                                             |
+| `nightly`                    | `false`  | The run nobody is waiting on: property tests get fifty times the runs they ask for with a two-minute limit on each, the fuzzer gets ten minutes instead of twenty seconds, and both jobs get a timeout that fits. The caller supplies the schedule, and a second job of its own files what a red one leaves behind — [The nightly run](#the-nightly-run).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
+| `affected`                   | `false`  | Runs the `typecheck` lane over the packages a pull request changed, via turbo's `--affected` with `TURBO_SCM_BASE` set to the pull request's base commit. Needs `turbo.json` at the root and is refused without one; ignored on a push, where `main` stays the full run.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
+| `database`                   | `none`   | `postgres` adds the database job: an empty Postgres, the migrations replayed onto it twice, the app booted against the result, its route table held to the base ref's, and generated requests sent to every route it serves. `external` says a workflow wrapping this one runs the database gates in that job's place. `none` is a repo with no schema. Anything but `none` makes `db:migrate` part of the repo contract; anything outside the three is refused.                                                                                                                                                                                                                                                                                                                                                                                                                                |
+| `compose`                    | `false`  | Holds `docker-compose.yml` to the deployment shape.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
+| `mutation-lane`              | `false`  | Mutates the domain files this branch changed and fails on a mutant its own lines left undetected, on a run whose suite was already failing unmutated, or on one that graded only part of what it mutated. Refuses a `bunfig.toml` that sets `[test] retry`, which bun's command line cannot switch off and which would grade a mutant on whichever try passed. Reads the pure domain from the `boundaries/elements` entry typed `domain`; needs `@stryker-mutator/core` and `@hughescr/stryker-bun-runner` among the repo's devDependencies, a `node` on the runner's PATH that every package they load accepts in `engines.node`, and a `TMPDIR` that, with every directory above it, is owned by the runner's user or root and not writable by group or others without the sticky bit; a run that exits without a report on a runner lacking either names the one it lacks as a likely cause. |
+| `mutation-floor`             | `""`     | The mutation score the changed domain files must hold, as a fraction between 0 and 1. Empty publishes the score and enforces nothing. Needs `mutation-lane: true`.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
+| `mutation-tests`             | `""`     | The test files that grade the pure domain, as glob patterns relative to the working directory, one per line; the lane runs exactly the files they name instead of every test file in the project. A pattern that names nothing, reaches outside the working directory or names a file `bunfig.toml` ignores is refused. Needs `mutation-lane: true`.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
+| `mutation-case-timeout`      | `""`     | How long one test case may run in the mutation lane before bun fails it, in milliseconds from 1 to 540000, the lane's whole run. Stryker's deadline for a mutant is 1.5 × what its tests took unmutated, plus this, so a timeout there means a mutant that hangs. Empty is 60000. Needs `mutation-lane: true`.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
+| `duplicate-code`             | `false`  | Fails on a run of twelve or more lines, comments and whitespace aside, that this branch wrote and that also appears elsewhere in the repo's source. Kept by `// duplicate-code-allow -- <reason>` on the clone's first line or the line above; a file `.gitattributes` marks `linguist-generated` is not read. Needs the base ref, which `fetch-depth: 0` gives it.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
+| `upgrade-gate`               | `false`  | Also proves that a database upgraded from the base ref's migrations reaches the schema a fresh one gets. Needs `database: postgres`; for repos whose database is deployed.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
+| `semantic-fixtures`          | `""`     | A directory of the repo's own holding the rows a deployed database already has, as base-compatible SQL, each with the assertion the current contract makes about them: written into the base ref's replay and graded after this branch's migrations run over them. Needs `upgrade-gate: true`. Needs `database: postgres`.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
+| `contract-exemptions`        | `""`     | Repo-contract facts this repo is structurally unable to satisfy, space-separated. A marketing site names `docs-spine`; a repo being wound down names `lifecycle-retire`.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
+| `data-jobs-external`         | `""`     | Where the deployment already runs a live repo's backup and restore drill, when they are not this repo's own scripts — the job, its schedule and the runbook. Empty asks for `scripts/backup.sh` and `scripts/restore-drill.sh` with their units. The reason is the waiver, so there is no way to claim it without naming the jobs.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
+| `operations-timed-otherwise` | `""`     | Why a live repo that serves HTTP and owns a database is not timed by [request timing](docs/exports/request-timing.md): how its operations are timed instead, or that it serves nothing a connector covers, and what it serves. Empty asks for a `bun test` file importing `@gokayo43/dev-config/request-timing/conformance`, and where a manifest ships `effect`, one importing `@gokayo43/dev-config/request-timing/conformance/effect`. The reason is the waiver of both; it is refused on a repo that does not owe the test or that has a test importing either.                                                                                                                                                                                                                                                                                                                             |
+| `stack-allowlist`            | `""`     | Packages this repo keeps against the stack denylist, as `<package> -- why` entries, one per line; an entry is refused when it carries no reason, when nothing here declares the package any more, or when the denylist has stopped denying it.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
+| `backfill-seed`              | `""`     | Shell code putting a database into the state this repo's backfill was written for. Set it with `backfill-command` or not at all. Needs `database: postgres`.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
+| `backfill-command`           | `""`     | The backfill, as shell code: run twice against the state `backfill-seed` wrote, in a database of the check's own, with the data compared either side of the second run. Needs `database: postgres`.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
+| `start-command`              | `""`     | How the boot gate starts the app. Empty takes `bun run start`, applied by the database job rather than declared here, so that the guard can tell a caller who passed this from one who did not. Needs `database: postgres`.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
+| `health-url`                 | `""`     | What the boot gate polls until it answers 200. Empty takes `http://localhost:${PORT}/api/health`, applied by the database job — `PORT` is the port that job allocates, for the reason "Where it runs" above gives. Needs `database: postgres`.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
+| `probe-command`              | `""`     | A command of the repo's own, run as shell against the booted app after it answers its health route, with the app's URL in `HEALTH_URL`. Its stdout is the verdict: every line it writes there is one problem, whatever it exits with. Needs `database: postgres`.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
+| `probe-timeout`              | `""`     | How many seconds `probe-command` gets before it is killed. Empty takes the bound `db-gate/probe.ts` declares — 120 seconds today — which is where that number and the argument for it live. Needs `probe-command`. Needs `database: postgres`.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
+| `timestamp-allowlist`        | `""`     | `schema.table.column -- why` entries whose value really is a wall-clock reading rather than an instant, one per line; an entry is refused when it carries no reason, when the schema has no column of that name, or when that column is no longer a wall-clock one. Needs `database: postgres`.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
+| `fuzz-seed`                  | `""`     | The seed the route fuzzer generates from: paste the number a failing run printed to send that run again. Empty derives one from the run's id, so a re-run searches somewhere new. Needs `database: postgres`.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
+| `db-gate-evidence`           | `""`     | The artifact name for the route-log snapshot, the route table the committed snapshot must hold, the backfill check's three data dumps, the fuzzer's report and the app's output, for a matrix that runs more than one leg. Empty takes `db-gate`'s own name, which is where that default lives. Needs `database: postgres`.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
+| `route-allowlist`            | `""`     | Routes the fuzzer sends no generated request to, as `METHOD /path -- why` entries, one per line; one without a reason, one that is not a route and one naming a route the app does not serve are each refused. Needs `database: postgres`.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
+| `route-retire`               | `""`     | Routes this repo has deliberately stopped serving, as `METHOD /path -- why` entries matching the base ref's `routes.snapshot.json`, one per line. Graded where the `lifecycle` field says `live`, which is where the base ref's routes are held at all; an entry without a reason, one the base ref never served, one the app still serves, and the whole input on a repo that holds nothing are all refused. Needs `database: postgres`.                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
+| `test-network`               | `""`     | Why this repo's suite has to reach a real network. Empty runs the suite sealed in a network namespace with nothing but loopback in it, so a live call fails where it is written. The reason is the input, and it is read in review like the reason on a lint directive.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
+| `test-suite-evidence`        | `""`     | The artifact name for the junit report, for a matrix that runs more than one leg. Empty takes `test-suite`'s own name, which is where that default lives.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
 
 Both evidence names default to a constant, and an artifact name may be claimed
 once per run — so a caller that runs `check.yml` as a **matrix** has to give each
@@ -1678,7 +2132,7 @@ which is one fewer place for an input added later to go missing, as `fuzz-seed`
 already had. Each of them
 fails the run when passed with
 anything but `database: postgres`, saying which: being quietly ignored is how a
-ramp somebody asked for turns out never to have run. `external` refuses them
+gate somebody asked for turns out never to have run. `external` refuses them
 exactly as `none` does, because the job they configure does not run here either
 way — the wrapper that took that job over declares its own. All but
 `upgrade-gate` are empty until a caller says otherwise, which is what makes the
@@ -1692,8 +2146,10 @@ them ride on another input rather
 than on the job, and are asked a second question for the same reason:
 `semantic-fixtures` is refused without `upgrade-gate: true`, since the rows go
 into the replay that input adds, and `probe-timeout` is refused without
-`probe-command`, since on its own it bounds nothing. `mutation-floor` is refused
-without `mutation-lane: true` on the same argument, and `build-cache` without
+`probe-command`, since on its own it bounds nothing. `mutation-floor`,
+`mutation-tests` and `mutation-case-timeout` are refused without
+`mutation-lane: true` on the same argument,
+and `build-cache` without
 `build: true`, since the paths it names are kept around that build.
 
 The call is pinned by commit SHA with the release as the trailing comment — the
@@ -1726,7 +2182,8 @@ for a private git dependency where the caller passed one — the optional build,
 the suite ran, and — where the repo asks for it — the mutation lane over the
 domain files this branch changed.
 From `format:check` to `knip` the chain is the local `bun run check`, and the
-suite after it is the local `bun test`. The git hooks run none of it on push,
+suite after it is the local `bun run test`, or `bun test` where the repo
+declares no `test` script. The git hooks run none of it on push,
 because the chain runs once, on the state that lands, at landing or in CI. The
 rest is what only CI has.
 
@@ -1960,8 +2417,12 @@ nobody reads.
 nobody would sit through: every property test runs fifty times the inputs it
 asks for, with two minutes as the most any one property may spend, and the route
 fuzzer gets ten minutes instead of twenty seconds. Both jobs get a timeout that
-fits. Nothing else about the run changes, and `nightly: false` — which is every
-caller that says nothing — is byte for byte the run it always was.
+fits, and every suite, a wrapper and a script that states its own limit
+included, gets `--timeout 600000` last on its command line. On every other run,
+`nightly: false` being every caller that says nothing, a suite whose command is
+`bun test` and names no limit gets `--timeout 60000`, and any other suite gets
+no limit from the gate ([test-suite](docs/gates/test-suite.md)). Nothing else
+about the run changes.
 
 It comes in two halves, and the second is a workflow of its own:
 
@@ -2068,7 +2529,8 @@ and filing on one is how a repo collects a duplicate issue a night.
 `repo-contract`, `stack-gate`, `lint-workflows`, `suppression-hygiene`,
 `duplicate-code`, `shell-scripts`, `compose-lint`, `test-suite` and
 `mutation-lane` run in the static job; `db-gate` is the
-database job, and the capacity ramp and the route fuzzer are steps of it. Each
+database job, and the route compatibility floor and the route fuzzer are steps
+of it. Each
 but `lint-workflows` has its page under [`docs/gates/`](docs/gates/), listed in
 the table at the top of this file; `lint-workflows` is written down under
 "Gating this repo" above.
