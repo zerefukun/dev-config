@@ -10,7 +10,7 @@ description: >-
 inputs:
   command:
     description: >-
-      `start`, before the first step that needs either server, or `stop`, as the
+      `start`, before the first step that needs any of its servers, or `stop`, as the
       job's last step under `if: always()`.
     required: true
   mysql:
@@ -27,7 +27,7 @@ outputs:
     description: redis://127.0.0.1:<port>, after `start`.
     value: ${{ steps.services.outputs.redis-url }}
   mysql-url:
-    description: "mysql://root@127.0.0.1:<port>/mysql, after a `start` with `mysql: true`."
+    description: "mysql://root:<password made for this start>@127.0.0.1:<port>/mysql, after a `start` with `mysql: true`."
     value: ${{ steps.services.outputs.mysql-url }}
 
 runs:

@@ -1,7 +1,7 @@
 import { appendFile } from "node:fs/promises";
 
 import { entry } from "../_lib/gate.ts";
-import { freePort, start, stop } from "./services.ts";
+import { selected, start, stop } from "./services.ts";
 
 await entry(async () => {
   const [command, root, outputs, mysql] = Bun.argv.slice(2);
@@ -14,10 +14,11 @@ await entry(async () => {
     if (mysql !== "true" && mysql !== "false") {
       throw new Error(`mysql must be true or false, not '${mysql ?? ""}'`);
     }
-    const services = await start(root, freePort, { mysql: mysql === "true" });
-    const lines = [`database-url=${services.databaseUrl}`, `redis-url=${services.redisUrl}`];
-    if (services.mysqlUrl !== undefined) lines.push(`mysql-url=${services.mysqlUrl}`);
-    await appendFile(outputs, `${lines.join("\n")}\n`);
+    const started = await start(root, selected({ mysql: mysql === "true" }));
+    await appendFile(
+      outputs,
+      started.map(({ server, url }) => `${server.output}=${url}\n`).join(""),
+    );
   } else if (command === "stop") {
     await stop(root);
   } else {
