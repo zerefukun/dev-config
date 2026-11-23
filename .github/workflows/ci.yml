@@ -110,25 +110,28 @@ jobs:
 
       # The replay gate's fixtures are two databases and what each ends up
       # holding, and the limiter conformance suite grades a bucket two
-      # processes share and a limiter whose Redis is gone; nothing in-process
-      # stands in for either.
+      # processes share and a limiter whose Redis is gone; the request-timing
+      # connector suites grade what mysql2 and drizzle do against a real MySQL.
+      # Nothing in-process stands in for any of them.
       - id: services
         uses: ./.github/actions/services
         with:
           command: start
+          mysql: true
 
       # `--coverage` by hand: it is the one guarantee of the substituted action
       # this step does keep, and without it the floor above it declares is
       # applied to nothing. docs/gates/test-suite.md.
       - run: bun run test --coverage
         env:
-          # Neither has a default, deliberately: the conformance suite flushes
+          # None has a default, deliberately: the conformance suite flushes
           # its Redis and the database suites drop databases on their server,
           # and `localhost` on a machine that runs other things, a developer's,
-          # is not a safe thing for either to assume. Both are the instances the
-          # step above started.
+          # is not a safe thing for any of them to assume. Each is an instance
+          # the step above started.
           TEST_DATABASE_URL: ${{ steps.services.outputs.database-url }}
           TEST_REDIS_URL: ${{ steps.services.outputs.redis-url }}
+          TEST_MYSQL_URL: ${{ steps.services.outputs.mysql-url }}
 
       # Under always(), so a start or a suite that failed still leaves nothing
       # running and nothing on the runner's disk.

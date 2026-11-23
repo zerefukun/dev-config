@@ -100,6 +100,7 @@ test("each job that needs the servers starts them, hands on their URLs and stops
     urls: {
       TEST_DATABASE_URL: "${{ steps.services.outputs.database-url }}",
       TEST_REDIS_URL: "${{ steps.services.outputs.redis-url }}",
+      TEST_MYSQL_URL: "${{ steps.services.outputs.mysql-url }}",
     },
   });
 });

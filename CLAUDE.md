@@ -64,7 +64,8 @@ a change to a rule usually lands here too.
   GitHub's Actions cache between runs. Those two are actions because both jobs
   of `check.yml` run them, and one copy serves both where a copy per job rots
   untested (#101). `services` is the job's throwaway Postgres 16 and Redis 7,
-  the one way a job gets a server. An action holds more than one module when it holds more than one subject:
+  and MySQL 8.0 when a job asks for it with `mysql: true`, as this repo's
+  `ci.yml` does: the one way a job gets a server. An action holds more than one module when it holds more than one subject:
   `repo-contract/live.ts` is what the word "live" derives — everything a repo
   owes because it carries people — beside the contract every repo satisfies
   whether or not anyone is on the other end; `repo-contract/browser-suite.ts` is

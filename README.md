@@ -1637,25 +1637,30 @@ is given, and is required for the same reason and refuses to guess for the same
 reason. A default address is how a suite wipes the Redis four stacks on one box
 were sharing.
 
-Both come from the `services` action, which CI runs and a machine runs by hand.
-It needs PostgreSQL 16's `initdb`, `pg_ctl` and `postgres` and `redis-server` 7
-on `PATH`, and an account that is not root; the replay and backfill gates also
-need PostgreSQL 16's `pg_dump` there, and the action's own suite runs the same
-binaries, so they stay on `PATH` for `bun test`. Debian's packages put the
-Postgres ones in `/usr/lib/postgresql/16/bin`. The root is named for the
-checkout, so two checkouts on one machine keep two pairs:
+Both come from the `services` action, which CI runs and a machine runs by hand,
+and so does the MySQL below, which the action starts only when asked. It needs
+PostgreSQL 16's `initdb`, `pg_ctl` and `postgres`, `redis-server` 7 and, asked
+for MySQL, MySQL 8.0's `mysqld` on `PATH`, and an account that is not root; the
+replay and backfill gates also need PostgreSQL 16's `pg_dump` there, and the
+action's own suite runs the same binaries, so they stay on `PATH` for
+`bun test`. Debian's packages put the Postgres ones in
+`/usr/lib/postgresql/16/bin`, and Ubuntu's `mysqld` in `/usr/sbin` under an
+AppArmor profile that confines it to the system data directory, which the
+action's CI step unloads and a machine running it by hand unloads the same way
+(`sudo apparmor_parser --remove /etc/apparmor.d/usr.sbin.mysqld`). The root is
+named for the checkout, so two checkouts on one machine keep two sets:
 
 ```sh
 export PATH=/usr/lib/postgresql/16/bin:$PATH
 root=${TMPDIR:-/tmp}/dev-config-services-$(pwd | sha256sum | cut -c1-12)
-bun .github/actions/services/services.main.ts start "$root" /dev/stdout
-export TEST_DATABASE_URL=… TEST_REDIS_URL=…   # the two URLs it printed
+bun .github/actions/services/services.main.ts start "$root" /dev/stdout true
+export TEST_DATABASE_URL=… TEST_REDIS_URL=… TEST_MYSQL_URL=…   # the three URLs it printed
 # and when done
 bun .github/actions/services/services.main.ts stop "$root" /dev/null
 ```
 
-Both listen on `127.0.0.1` alone, each on a port the kernel picked, so nothing
-off the machine reaches them and the two pairs never collide.
+Each listens on `127.0.0.1` alone, on a port the kernel picked, so nothing off
+the machine reaches them and two checkouts' servers never collide.
 
 The request-timing mysql2, Elysia, Next.js and tRPC suites need a MySQL, since
 what they grade is what mysql2 and drizzle do against a real server, and the
@@ -1665,16 +1670,8 @@ under a prefix of their own on the Redis. The prefix keeps their keys apart
 from each other's, not from the limiter conformance suite, which flushes the
 same Redis between its cases, so two runs that share one Redis can wipe each
 other's keys: give each run a Redis of its own. `TEST_MYSQL_URL` is required
-and refuses to guess for the reason the Postgres does:
-
-```sh
-docker run --rm -d -p 127.0.0.1:3417:3306 -e MYSQL_ROOT_PASSWORD=mysql --tmpfs /var/lib/mysql:size=1g mysql:8.0.42
-export TEST_MYSQL_URL=mysql://root:mysql@127.0.0.1:3417/mysql
-```
-
-It publishes on `127.0.0.1` explicitly: a bare `-p 3306:3306` binds `0.0.0.0`,
-and Docker's forwarding rule answers it on the box's public address whatever
-`ufw` is set to.
+and refuses to guess for the reason the Postgres does, and the `services` start
+above, asked with `true`, prints it.
 
 The preset suite runs Renovate's validator with the `re2` addon, which `bun
 install` builds from source, so a machine running it carries `g++`, `make`,
@@ -1945,18 +1942,19 @@ read against the new image's README in actions/runner-images.
 
 **What the image provides, and what the actions install.** Read off
 actions/runner-images' `images/ubuntu/Ubuntu2404-Readme.md` (image
-20261101.360.1):
+20261101.360.1, and 20261116.376.1 for MySQL):
 
-| Needed by                                 | What                                                                  | Where it comes from                                                                                             |
-| ----------------------------------------- | --------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------- |
-| `services`, the replay and backfill gates | PostgreSQL 16's `initdb`, `pg_ctl`, `postgres`, `pg_dump`             | the image, under `/usr/lib/postgresql/16/bin`, service disabled; `services` puts the directory on `GITHUB_PATH` |
-| `services`                                | `redis-server` 7                                                      | `services` installs Ubuntu's package with apt, its unit masked first                                            |
-| `test-suite`, this repo's suite           | the `ci-seal` helper                                                  | `ci-seal.sh` beside the action, run in place                                                                    |
-| `test-suite`                              | passwordless sudo, `unshare`, `setpriv`, `ip`                         | the image                                                                                                       |
-| every job, Playwright under node          | Node 24, which parses `await using` (the image's default 22 does not) | `actions/setup-node`, from the image's tool cache                                                               |
-| this repo's `bun install` (`re2`)         | `g++`, `make`, `python3`, Node 24's headers                           | the image                                                                                                       |
-| this repo's browser suites                | Playwright's headless chromium and its libraries                      | `ci.yml`, with `playwright install --with-deps`                                                                 |
-| `build`                                   | the build tool's cache                                                | GitHub's Actions cache, through `actions/cache`                                                                 |
+| Needed by                                        | What                                                                  | Where it comes from                                                                                             |
+| ------------------------------------------------ | --------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------- |
+| `services`, the replay and backfill gates        | PostgreSQL 16's `initdb`, `pg_ctl`, `postgres`, `pg_dump`             | the image, under `/usr/lib/postgresql/16/bin`, service disabled; `services` puts the directory on `GITHUB_PATH` |
+| `services`                                       | `redis-server` 7                                                      | `services` installs Ubuntu's package with apt, its unit masked first                                            |
+| `services` with `mysql: true`, this repo's suite | MySQL 8.0's `mysqld`                                                  | the image, Ubuntu's package, service disabled; `services` unloads the package's AppArmor profile for `mysqld`   |
+| `test-suite`, this repo's suite                  | the `ci-seal` helper                                                  | `ci-seal.sh` beside the action, run in place                                                                    |
+| `test-suite`                                     | passwordless sudo, `unshare`, `setpriv`, `ip`                         | the image                                                                                                       |
+| every job, Playwright under node                 | Node 24, which parses `await using` (the image's default 22 does not) | `actions/setup-node`, from the image's tool cache                                                               |
+| this repo's `bun install` (`re2`)                | `g++`, `make`, `python3`, Node 24's headers                           | the image                                                                                                       |
+| this repo's browser suites                       | Playwright's headless chromium and its libraries                      | `ci.yml`, with `playwright install --with-deps`                                                                 |
+| `build`                                          | the build tool's cache                                                | GitHub's Actions cache, through `actions/cache`                                                                 |
 
 The `services` action refuses a Postgres that is not 16 and a Redis that is not
 7 by name: an image carrying another major would grade every repo against a

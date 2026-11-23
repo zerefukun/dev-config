@@ -5,6 +5,7 @@ import { networkInterfaces, tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { RedisClient, SQL } from "bun";
+import { createConnection, type RowDataPacket } from "mysql2/promise";
 
 import { rows } from "../.github/actions/db-gate/database.ts";
 import {
@@ -52,8 +53,13 @@ async function refusal(pending: Promise<unknown>): Promise<string> {
 }
 
 /** `services.main.ts start` as the action runs it, on the PATH a case chooses. */
-async function startOn(path: string, root: string): Promise<{ status: number; output: string }> {
-  const proc = Bun.spawn([process.execPath, MAIN, "start", root, join(root, "..", "outputs")], {
+async function startOn(
+  path: string,
+  root: string,
+  mysql = "false",
+): Promise<{ status: number; output: string }> {
+  const outputs = join(root, "..", "outputs");
+  const proc = Bun.spawn([process.execPath, MAIN, "start", root, outputs, mysql], {
     env: { ...process.env, PATH: path },
     stdout: "pipe",
     stderr: "pipe",
@@ -68,6 +74,19 @@ async function startOn(path: string, root: string): Promise<{ status: number; ou
 
 function portOf(url: string): number {
   return Number(new URL(url).port);
+}
+
+/** Where the started MySQL listens and keeps its data, as it reports them. */
+async function mysqlPlace(url: string): Promise<{ bound: string; data: string }> {
+  const connection = await createConnection(url);
+  try {
+    const [found] = await connection.query<RowDataPacket[]>(
+      "select @@bind_address as bound, @@datadir as data",
+    );
+    return { bound: String(found[0]?.["bound"]), data: String(found[0]?.["data"]) };
+  } finally {
+    await connection.end();
+  }
 }
 
 async function pidIn(path: string): Promise<number> {
@@ -214,6 +233,77 @@ describe("start", () => {
     expect(existsSync(run.root)).toBe(false);
   });
 
+  // The wrong implementation starts MySQL on every start, which hands every
+  // job that asked for PostgreSQL and Redis alone a third server and output.
+  test(
+    "starts no MySQL and names no mysql-url unless asked",
+    async () => {
+      await using run = await scratch();
+      const started = await startOn(process.env["PATH"] ?? "", run.root);
+      expect(started.status).toBe(0);
+      const outputs = await readFile(join(run.parent, "outputs"), "utf8");
+      expect(outputs).toContain("database-url=");
+      expect(outputs).not.toContain("mysql-url");
+      expect(existsSync(join(run.root, "mysql"))).toBe(false);
+      expect(existsSync(join(run.root, "mysql.pid"))).toBe(false);
+    },
+    SLOW,
+  );
+
+  // The wrong implementations: MySQL's default listen address, every
+  // interface; a fixed 3306; the image's own instance or its system data
+  // directory in place of one under the root; and a URL that names something
+  // other than what was started.
+  test(
+    "asked, hands back a MySQL of the root's own that answers on 127.0.0.1 and nowhere else",
+    async () => {
+      await using run = await scratch();
+      const started = await startOn(process.env["PATH"] ?? "", run.root, "true");
+      expect(started.status).toBe(0);
+      const outputs = await readFile(join(run.parent, "outputs"), "utf8");
+      const url = /^mysql-url=(.*)$/m.exec(outputs)?.[1] ?? "";
+      expect(url).toStartWith("mysql://root@127.0.0.1:");
+      expect(await mysqlPlace(url)).toEqual({
+        bound: "127.0.0.1",
+        data: `${join(run.root, "mysql")}/`,
+      });
+      expect(ELSEWHERE.length).toBeGreaterThan(0);
+      for (const address of ELSEWHERE) {
+        expect(await reachable(address, portOf(url))).toBe(false);
+      }
+    },
+    SLOW,
+  );
+
+  test(
+    "fails a MySQL start by name when every port it is given is taken",
+    async () => {
+      await using run = await scratch();
+      using taken = held();
+      let asked = 0;
+      const lastTaken: Allocate = () => (++asked > 2 ? taken.port : freePort());
+      expect(await refusal(start(run.root, lastTaken, { mysql: true }))).toContain(
+        "mysqld found every one of 5 allocated ports taken",
+      );
+    },
+    SLOW,
+  );
+
+  test("refuses a MySQL that is not 8.0, before it starts anything", async () => {
+    await using run = await scratch();
+    const bin = join(run.parent, "mysql-9");
+    await mkdir(bin);
+    await Bun.write(
+      join(bin, "mysqld"),
+      "#!/bin/sh\necho '/usr/sbin/mysqld  Ver 9.1.0 for Linux on x86_64'\n",
+    );
+    await chmod(join(bin, "mysqld"), 0o755);
+    const started = await startOn(`${bin}:${process.env["PATH"] ?? ""}`, run.root, "true");
+    expect(started.status).toBe(1);
+    expect(started.output).toContain("is not MySQL 8.0");
+    expect(existsSync(run.root)).toBe(false);
+  });
+
   // A runner carrying another major grades every migration against a server
   // production does not run; the wrong implementation takes whatever is first
   // on PATH.
@@ -250,6 +340,20 @@ describe("stop", () => {
       expect([runs(postgres, "postgres"), runs(redis, "redis-server")]).toEqual([true, true]);
       await stop(run.root);
       expect([runs(postgres, "postgres"), runs(redis, "redis-server")]).toEqual([false, false]);
+      expect(existsSync(run.root)).toBe(false);
+    },
+    SLOW,
+  );
+
+  test(
+    "takes a MySQL it was asked for down by its pid, and deletes its data",
+    async () => {
+      await using run = await scratch();
+      await start(run.root, freePort, { mysql: true });
+      const mysql = await pidIn(join(run.root, "mysql.pid"));
+      expect(runs(mysql, "mysqld")).toBe(true);
+      await stop(run.root);
+      expect(runs(mysql, "mysqld")).toBe(false);
       expect(existsSync(run.root)).toBe(false);
     },
     SLOW,
@@ -307,6 +411,7 @@ describe("stop", () => {
     expect(runs(bystander.pid, "sleep")).toBe(true);
     await Bun.write(join(run.root, "postgres", "postmaster.pid"), `${bystander.pid}\n`);
     await Bun.write(join(run.root, "redis.pid"), `${bystander.pid}\n`);
+    await Bun.write(join(run.root, "mysql.pid"), `${bystander.pid}\n`);
     await stop(run.root);
     expect(runs(bystander.pid, "sleep")).toBe(true);
     expect(existsSync(run.root)).toBe(false);

@@ -1,10 +1,12 @@
 /**
- * A throwaway PostgreSQL 16 and Redis 7 for one job, run under a directory the
- * job owns, and gone when the job is.
+ * A throwaway PostgreSQL 16 and Redis 7 for one job, and a MySQL 8.0 when the
+ * job asks for one, run under a directory the job owns, and gone when the job
+ * is.
  *
  * The machine's side of the contract: `initdb`, `pg_ctl` and `postgres` from
  * PostgreSQL 16 and `redis-server` 7 on PATH, which in CI the action's step
- * before this one provides, an account that is not root (initdb refuses one),
+ * before this one provides, `mysqld` 8.0 there too when MySQL is asked for,
+ * an account that is not root (initdb refuses one),
  * and Linux's /proc, which is how a pid is checked to still be the server it
  * was written for.
  */
@@ -12,10 +14,16 @@ import { existsSync, readFileSync } from "node:fs";
 import { appendFile, mkdir, readFile, rm } from "node:fs/promises";
 import { basename, join } from "node:path";
 
-/** The two addresses a job's suites and gates are handed. */
+/** The addresses a job's suites and gates are handed: MySQL's only when it was asked for. */
 export interface Services {
   readonly databaseUrl: string;
   readonly redisUrl: string;
+  readonly mysqlUrl?: string;
+}
+
+/** Which servers a start runs beyond the PostgreSQL and Redis every start runs. */
+export interface Asked {
+  readonly mysql: boolean;
 }
 
 /** A port on 127.0.0.1 that nothing held when it was asked for. */
@@ -63,11 +71,12 @@ async function run(command: readonly string[]): Promise<{ status: number; output
  * carrying Postgres 17 would grade every repo's migrations against a server
  * its production does not run, and say nothing.
  */
-async function located(): Promise<void> {
-  const missing = BINARIES.filter((name) => Bun.which(name) === null);
+async function located(asked: Asked): Promise<void> {
+  const binaries = asked.mysql ? [...BINARIES, "mysqld"] : BINARIES;
+  const missing = binaries.filter((name) => Bun.which(name) === null);
   if (missing.length > 0) {
     throw new Error(
-      `the runner has no ${missing.join(", ")} on PATH — this action runs PostgreSQL 16's initdb, pg_ctl and postgres and redis-server 7 from the job's PATH`,
+      `the runner has no ${missing.join(", ")} on PATH — this action runs PostgreSQL 16's initdb, pg_ctl and postgres, redis-server 7 and, when asked, MySQL 8.0's mysqld from the job's PATH`,
     );
   }
   const postgres = await run(["postgres", "--version"]);
@@ -77,6 +86,11 @@ async function located(): Promise<void> {
   const redis = await run(["redis-server", "--version"]);
   if (!/\bv=7\./.test(redis.output)) {
     throw new Error(`${Bun.which("redis-server") ?? ""} is not Redis 7: ${redis.output}`);
+  }
+  if (!asked.mysql) return;
+  const mysql = await run(["mysqld", "--version"]);
+  if (!/\bVer 8\.0\./.test(mysql.output)) {
+    throw new Error(`${Bun.which("mysqld") ?? ""} is not MySQL 8.0: ${mysql.output}`);
   }
 }
 
@@ -221,23 +235,88 @@ async function startRedis(root: string, allocate: Allocate): Promise<string> {
 }
 
 /**
- * Starts both servers under `root`, which must not exist yet: a root that does
- * is a start that ran before and was never stopped, and starting over it would
- * leave the first pair running with nothing pointing at them.
+ * The options every mysqld run here takes, initialisation included. No
+ * option file is read, so nothing the image's own instance is configured with
+ * reaches this one. `secure_file_priv` is NULL because its packaged default
+ * names a directory under the system instance's. The X Protocol listener is
+ * off because it binds every interface on its own port.
+ */
+function mysqlOptions(root: string, log: string): string[] {
+  return [
+    "--no-defaults",
+    `--datadir=${join(root, "mysql")}`,
+    `--log-error=${log}`,
+    "--secure-file-priv=NULL",
+    "--mysqlx=OFF",
+  ];
+}
+
+async function startMysql(root: string, allocate: Allocate): Promise<string> {
+  const initLog = join(root, "mysql-init.log");
+  const initialised = await run([
+    "mysqld",
+    ...mysqlOptions(root, initLog),
+    "--initialize-insecure",
+  ]);
+  if (initialised.status !== 0) {
+    const said = await textOf(initLog);
+    throw new Error(`mysqld --initialize-insecure failed: ${initialised.output}\n${said}`);
+  }
+
+  // Durability is off because nothing here outlives the job.
+  const port = await onFreshPort("mysqld", allocate, async (candidate) => {
+    const log = join(root, `mysql-${candidate}.log`);
+    const launched = await run([
+      "mysqld",
+      ...mysqlOptions(root, log),
+      "--bind-address=127.0.0.1",
+      `--port=${candidate}`,
+      `--socket=${join(root, "mysql.sock")}`,
+      `--pid-file=${join(root, "mysql.pid")}`,
+      "--skip-log-bin",
+      "--innodb-flush-log-at-trx-commit=0",
+      "--daemonize",
+    ]);
+    const deadline = Date.now() + READY_MS;
+    let said = await textOf(log);
+    while (Date.now() < deadline) {
+      if (/ready for connections/.test(said)) return "ready";
+      if (/Address already in use/.test(said)) return "taken";
+      if (/Aborting/.test(said) || launched.status !== 0) break;
+      await Bun.sleep(50);
+      said = await textOf(log);
+    }
+    throw new Error(
+      `mysqld did not become ready on 127.0.0.1:${candidate}: ${launched.output}\n${said}`,
+    );
+  });
+  return `mysql://root@127.0.0.1:${port}/mysql`;
+}
+
+/**
+ * Starts PostgreSQL and Redis under `root`, and MySQL when `asked` says so.
+ * `root` must not exist yet: a root that does is a start that ran before and
+ * was never stopped, and starting over it would leave the first servers running
+ * with nothing pointing at them.
  *
  * A start that fails partway leaves what it started under `root`, for `stop`
  * to take down — the job's `always()` step is the one place that cleans up,
  * whether this failed or a later step did.
  */
-export async function start(root: string, allocate: Allocate = freePort): Promise<Services> {
+export async function start(
+  root: string,
+  allocate: Allocate = freePort,
+  asked: Asked = { mysql: false },
+): Promise<Services> {
   if (existsSync(root)) {
     throw new Error(`${root} already exists — a start that was never stopped; run stop first`);
   }
-  await located();
+  await located(asked);
   await mkdir(root, { recursive: true });
   const databaseUrl = await startPostgres(root, allocate);
   const redisUrl = await startRedis(root, allocate);
-  return { databaseUrl, redisUrl };
+  if (!asked.mysql) return { databaseUrl, redisUrl };
+  return { databaseUrl, redisUrl, mysqlUrl: await startMysql(root, allocate) };
 }
 
 async function exited(pid: number, server: string, within: number): Promise<boolean> {
@@ -270,6 +349,7 @@ async function terminate(pidFile: string, server: string, signal: NodeJS.Signals
  */
 export async function stop(root: string): Promise<void> {
   if (!existsSync(root)) return;
+  await terminate(join(root, "mysql.pid"), "mysqld", "SIGTERM");
   await terminate(join(root, "redis.pid"), "redis-server", "SIGTERM");
   await terminate(join(root, "postgres", "postmaster.pid"), "postgres", "SIGQUIT");
   await rm(root, { recursive: true, force: true });
